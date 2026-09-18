@@ -1,9 +1,0 @@
-# Cursor AI Rules for Sonic Pulse
-
-- Project: Flutter app for AI chord & guitar recognition.
-- Dart SDK: 3.11.x. Flutter state management: Provider.
-- Read `AGENTS.md` before making architectural or structural changes.
-- Do NOT remove `dependency_overrides: record_linux: ^1.3.1` in `pubspec.yaml`.
-- All global state (recognized history, saved tracks, current scan state) lives in `lib/providers/app_state.dart`.
-- Backend config lives in `lib/config/api_config.dart`. Mock mode is toggled via `ApiConfig.useMockResponses`.
-- Always verify changes with `flutter analyze --no-fatal-infos` and `flutter test`.
