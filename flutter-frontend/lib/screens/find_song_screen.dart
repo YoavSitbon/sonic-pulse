@@ -7,15 +7,18 @@ import '../widgets/bottom_nav_bar.dart';
 import '../models/track_result.dart';
 import '../services/audio_recorder_service.dart';
 import '../services/recognition_service.dart';
+import '../services/music_search_service.dart';
+import '../models/song_search_result.dart';
 import '../providers/app_state.dart';
 import '../config/api_config.dart';
 import 'home_screen.dart';
 import 'ai_analyzer_screen.dart';
+import 'library_screen.dart';
 
 // ─────────────────────────────────────────────────────────────
 // Screen states
 // ─────────────────────────────────────────────────────────────
-enum _ScanState { idle, recording, analyzing, result, error }
+enum _ScanState { idle, search, recording, analyzing, result, error }
 
 class FindSongScreen extends StatefulWidget {
   const FindSongScreen({super.key});
@@ -32,9 +35,15 @@ class _FindSongScreenState extends State<FindSongScreen>
   bool _isPlaying = false;
   int _recordingSecondsLeft = ApiConfig.recordingSeconds;
   Timer? _recordingTimer;
+  Timer? _searchDebounce;
+  final _searchController = TextEditingController();
+  List<SongSearchResult> _searchResults = [];
+  bool _isSearching = false;
+  String? _searchError;
 
   final _recorder = AudioRecorderService();
   final _recognizer = RecognitionService();
+  final _musicSearch = MusicSearchService();
 
   // Outer pulse ring
   late AnimationController _outerPulse;
@@ -100,6 +109,8 @@ class _FindSongScreenState extends State<FindSongScreen>
     _innerPulse.dispose();
     for (final c in _barCtrls) c.dispose();
     _recordingTimer?.cancel();
+    _searchDebounce?.cancel();
+    _searchController.dispose();
     _recorder.dispose();
     super.dispose();
   }
@@ -135,6 +146,67 @@ class _FindSongScreenState extends State<FindSongScreen>
         _finishRecordingAndSend();
       }
     });
+  }
+
+  void _openSearch() {
+    setState(() {
+      _scanState = _ScanState.search;
+      _searchError = null;
+    });
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    if (value.trim().isEmpty) {
+      setState(() {
+        _searchResults = [];
+        _searchError = null;
+        _isSearching = false;
+      });
+      return;
+    }
+    _searchDebounce = Timer(const Duration(milliseconds: 400), () async {
+      if (!mounted) return;
+      setState(() {
+        _isSearching = true;
+        _searchError = null;
+      });
+      try {
+        final results = await _musicSearch.search(value);
+        if (!mounted || value != _searchController.text) return;
+        setState(() => _searchResults = results);
+      } catch (_) {
+        if (!mounted || value != _searchController.text) return;
+        setState(() => _searchError = 'Could not search the music catalogue.');
+      } finally {
+        if (mounted && value == _searchController.text) {
+          setState(() => _isSearching = false);
+        }
+      }
+    });
+  }
+
+  Future<void> _selectSong(SongSearchResult song) async {
+    setState(() {
+      _scanState = _ScanState.analyzing;
+      _errorMessage = null;
+    });
+    try {
+      final result = await _recognizer.analyzeSelectedSong(
+        title: song.title,
+        artist: song.artist,
+      );
+      if (!mounted) return;
+      final resultWithArtwork = result.copyWith(artworkUrl: song.artworkUrl);
+      await context.read<AppState>().addIdentification(resultWithArtwork);
+      if (!mounted) return;
+      setState(() {
+        _result = resultWithArtwork;
+        _scanState = _ScanState.result;
+      });
+    } catch (e) {
+      _showError('Song analysis failed: ${e.toString().replaceAll('RecognitionException: ', '')}');
+    }
   }
 
   Future<void> _finishRecordingAndSend() async {
@@ -177,6 +249,9 @@ class _FindSongScreenState extends State<FindSongScreen>
       _result = null;
       _errorMessage = null;
       _isPlaying = false;
+      _searchController.clear();
+      _searchResults = [];
+      _searchError = null;
     });
   }
 
@@ -205,6 +280,11 @@ class _FindSongScreenState extends State<FindSongScreen>
             Navigator.pushReplacement(
               context,
               MaterialPageRoute(builder: (_) => const AiAnalyzerScreen()),
+            );
+          } else if (i == 3) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (_) => const LibraryScreen()),
             );
           }
         },
@@ -236,6 +316,18 @@ class _FindSongScreenState extends State<FindSongScreen>
         );
       case _ScanState.analyzing:
         return _AnalyzingView(key: const ValueKey('analyzing'));
+      case _ScanState.search:
+        return _SongSearchView(
+          key: const ValueKey('search'),
+          controller: _searchController,
+          results: _searchResults,
+          isSearching: _isSearching,
+          errorMessage: _searchError,
+          onChanged: _onSearchChanged,
+          onSelect: _selectSong,
+          onBack: _resetToIdle,
+          onShazam: _startScan,
+        );
       case _ScanState.error:
         return _ErrorView(
           key: const ValueKey('error'),
@@ -250,7 +342,8 @@ class _FindSongScreenState extends State<FindSongScreen>
           innerScale: _innerScale,
           innerOpacity: _innerOpacity,
           barAnims: _barAnims,
-          onTap: _startScan,
+          onShazam: _startScan,
+          onSearch: _openSearch,
         );
     }
   }
@@ -301,7 +394,8 @@ class _ListeningView extends StatelessWidget {
   final Animation<double> innerScale;
   final Animation<double> innerOpacity;
   final List<Animation<double>> barAnims;
-  final VoidCallback onTap;
+  final VoidCallback onShazam;
+  final VoidCallback onSearch;
 
   const _ListeningView({
     super.key,
@@ -310,21 +404,24 @@ class _ListeningView extends StatelessWidget {
     required this.innerScale,
     required this.innerOpacity,
     required this.barAnims,
-    required this.onTap,
+    required this.onShazam,
+    required this.onSearch,
   });
 
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
+      child: SizedBox(
+        width: double.infinity,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
           const SizedBox(height: 20),
           _PingBadge(label: 'ACOUSTIC ENGINE READY'),
           const SizedBox(height: 14),
           Text(
-            'Identify Song',
+            'Find an existing song',
             style: GoogleFonts.sora(
               fontSize: 28,
               fontWeight: FontWeight.w700,
@@ -335,7 +432,7 @@ class _ListeningView extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Tap the sphere — your mic will record ${ApiConfig.recordingSeconds}s of audio',
+            'Listen to what is playing or search for a song yourself',
             style: GoogleFonts.plusJakartaSans(
               fontSize: 14,
               color: AppColors.onSurfaceVariant,
@@ -344,7 +441,7 @@ class _ListeningView extends StatelessWidget {
           ),
           const SizedBox(height: 48),
           GestureDetector(
-            onTap: onTap,
+            onTap: onShazam,
             child: SizedBox(
               width: 280,
               height: 280,
@@ -468,7 +565,7 @@ class _ListeningView extends StatelessWidget {
           ),
           const SizedBox(height: 40),
           Text(
-            'TAP TO LISTEN',
+            'SHAZAM IT',
             style: GoogleFonts.spaceGrotesk(
               fontSize: 14,
               fontWeight: FontWeight.w700,
@@ -478,81 +575,239 @@ class _ListeningView extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Records ${ApiConfig.recordingSeconds}s • Sends to acoustic fingerprint engine',
+            'Records ${ApiConfig.recordingSeconds}s • Sends audio to the fingerprint engine',
             style: GoogleFonts.plusJakartaSans(
               fontSize: 12,
               color: AppColors.onSurfaceVariant.withOpacity(0.8),
             ),
           ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(999),
-              color: AppColors.surfaceContainerLow,
-              border: Border.all(
-                  color: AppColors.outlineVariant.withOpacity(0.3)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '44.1 kHz',
+          const SizedBox(height: 22),
+          Row(
+            children: [
+              Expanded(
+                child: Container(height: 1, color: AppColors.outlineVariant.withOpacity(0.4)),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  'OR',
                   style: GoogleFonts.spaceGrotesk(
-                    fontSize: 12,
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w500,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.onSurfaceVariant,
+                    letterSpacing: 1.5,
                   ),
                 ),
-                const SizedBox(width: 8),
-                Container(
-                  width: 4,
-                  height: 4,
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: AppColors.outline,
-                  ),
+              ),
+              Expanded(
+                child: Container(height: 1, color: AppColors.outlineVariant.withOpacity(0.4)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onSearch,
+              icon: const Icon(Icons.search_rounded),
+              label: const Text('SEARCH FOR A SONG'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                side: BorderSide(color: AppColors.primary.withOpacity(0.5)),
+                textStyle: GoogleFonts.spaceGrotesk(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
                 ),
-                const SizedBox(width: 8),
-                Row(
-                  children: const [
-                    _MiniBar(height: 8),
-                    SizedBox(width: 2),
-                    _MiniBar(height: 12),
-                    SizedBox(width: 2),
-                    _MiniBar(height: 6),
-                    SizedBox(width: 2),
-                    _MiniBar(height: 10),
-                    SizedBox(width: 2),
-                    _MiniBar(height: 8),
-                  ],
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  width: 4,
-                  height: 4,
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: AppColors.outline,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'WAV • Mono',
-                  style: GoogleFonts.spaceGrotesk(
-                    fontSize: 12,
-                    color: AppColors.secondary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
-          const SizedBox(height: 100),
-        ],
+          const SizedBox(height: 24),
+          ],
+        ),
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Public catalogue search
+// ─────────────────────────────────────────────────────────────
+
+class _SongSearchView extends StatelessWidget {
+  const _SongSearchView({
+    super.key,
+    required this.controller,
+    required this.results,
+    required this.isSearching,
+    required this.errorMessage,
+    required this.onChanged,
+    required this.onSelect,
+    required this.onBack,
+    required this.onShazam,
+  });
+
+  final TextEditingController controller;
+  final List<SongSearchResult> results;
+  final bool isSearching;
+  final String? errorMessage;
+  final ValueChanged<String> onChanged;
+  final ValueChanged<SongSearchResult> onSelect;
+  final VoidCallback onBack;
+  final VoidCallback onShazam;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: controller,
+              autofocus: true,
+              onChanged: onChanged,
+              textInputAction: TextInputAction.search,
+              style: GoogleFonts.plusJakartaSans(color: AppColors.onSurface),
+              decoration: InputDecoration(
+                hintText: 'Song or artist',
+                hintStyle: GoogleFonts.plusJakartaSans(color: AppColors.onSurfaceVariant),
+                prefixIcon: const Icon(Icons.search_rounded, color: AppColors.primary),
+                suffixIcon: isSearching
+                    ? const Padding(
+                        padding: EdgeInsets.all(14),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : controller.text.isNotEmpty
+                        ? IconButton(
+                            onPressed: () {
+                              controller.clear();
+                              onChanged('');
+                            },
+                            icon: const Icon(Icons.clear_rounded),
+                          )
+                        : null,
+                filled: true,
+                fillColor: AppColors.surfaceContainer,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: AppColors.outlineVariant.withOpacity(0.5)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: AppColors.outlineVariant.withOpacity(0.5)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: onShazam,
+                icon: const Icon(Icons.mic_rounded, size: 18),
+                label: const Text('Use Shazam instead'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.secondary,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            if (errorMessage != null)
+              Text(errorMessage!, style: const TextStyle(color: Colors.redAccent))
+            else if (controller.text.isEmpty)
+              Expanded(child: _SearchEmptyState(onBack: onBack))
+            else if (!isSearching && results.isEmpty)
+              const Expanded(child: Center(child: Text('No songs found. Try another search.')))
+            else
+              Expanded(
+                child: ListView.separated(
+                  keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                  itemCount: results.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (_, index) {
+                    final song = results[index];
+                    return _SongSearchTile(song: song, onTap: () => onSelect(song));
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchEmptyState extends StatelessWidget {
+  const _SearchEmptyState({required this.onBack});
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.library_music_rounded, size: 48, color: AppColors.secondary),
+            const SizedBox(height: 12),
+            Text('Search by song or artist',
+                style: GoogleFonts.plusJakartaSans(color: AppColors.onSurfaceVariant)),
+          ],
+        ),
+      );
+}
+
+class _SongSearchTile extends StatelessWidget {
+  const _SongSearchTile({required this.song, required this.onTap});
+  final SongSearchResult song;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+        color: AppColors.surfaceContainer,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(9),
+                  child: SizedBox(
+                    width: 52,
+                    height: 52,
+                    child: song.artworkUrl == null
+                        ? const ColoredBox(color: AppColors.surfaceContainerHigh, child: Icon(Icons.album_rounded))
+                        : Image.network(song.artworkUrl!, fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const ColoredBox(color: AppColors.surfaceContainerHigh, child: Icon(Icons.album_rounded))),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.sora(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.onSurface)),
+                    const SizedBox(height: 3),
+                    Text(song.artist, maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppColors.primary)),
+                    if (song.album.isNotEmpty) Text(song.album, maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppColors.onSurfaceVariant)),
+                  ]),
+                ),
+                const Icon(Icons.chevron_right_rounded, color: AppColors.onSurfaceVariant),
+              ],
+            ),
+          ),
+        ),
+      );
 }
 
 // ─────────────────────────────────────────────────────────────

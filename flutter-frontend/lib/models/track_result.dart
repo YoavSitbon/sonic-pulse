@@ -29,6 +29,7 @@ class TrackResult {
   final String camelot;
   final String timeSig;
   final DateTime timestamp;
+  final String? artworkUrl;
   bool isSaved;
 
   TrackResult({
@@ -43,6 +44,7 @@ class TrackResult {
     required this.camelot,
     required this.timeSig,
     required this.timestamp,
+    this.artworkUrl,
     this.isSaved = false,
   });
 
@@ -63,6 +65,7 @@ class TrackResult {
       timestamp:  json['timestamp'] != null
           ? DateTime.parse(json['timestamp'] as String)
           : DateTime.now(),
+      artworkUrl: json['artwork_url'] as String?,
       isSaved:    json['is_saved'] as bool? ?? false,
     );
   }
@@ -80,6 +83,7 @@ class TrackResult {
       'camelot':    camelot,
       'time_sig':   timeSig,
       'timestamp':  timestamp.toIso8601String(),
+      'artwork_url': artworkUrl,
       'is_saved':   isSaved,
     };
   }
@@ -104,7 +108,7 @@ class TrackResult {
     return '${diff.inDays}d ago';
   }
 
-  TrackResult copyWith({bool? isSaved}) {
+  TrackResult copyWith({bool? isSaved, String? artworkUrl}) {
     return TrackResult(
       title:      title,
       artist:     artist,
@@ -117,6 +121,7 @@ class TrackResult {
       camelot:    camelot,
       timeSig:    timeSig,
       timestamp:  timestamp,
+      artworkUrl: artworkUrl ?? this.artworkUrl,
       isSaved:    isSaved ?? this.isSaved,
     );
   }

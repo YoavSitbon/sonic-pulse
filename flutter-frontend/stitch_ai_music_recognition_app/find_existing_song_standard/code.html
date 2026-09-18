@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>SonicPulse - Find Song</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&amp;family=Sora:wght@600;700&amp;family=Space+Grotesk:wght@500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+          "background": "#0f131c",
+          "primary-fixed-dim": "#c0c1ff",
+          "on-tertiary": "#490080",
+          "secondary-fixed": "#acedff",
+          "on-secondary": "#003640",
+          "surface-variant": "#31353f",
+          "on-error-container": "#ffdad6",
+          "surface": "#0f131c",
+          "secondary": "#4cd7f6",
+          "error-container": "#93000a",
+          "primary-fixed": "#e1e0ff",
+          "on-secondary-fixed-variant": "#004e5c",
+          "surface-container-lowest": "#0a0e17",
+          "surface-container-highest": "#31353f",
+          "on-error": "#690005",
+          "tertiary": "#ddb7ff",
+          "primary": "#c0c1ff",
+          "secondary-container": "#03b5d3",
+          "error": "#ffb4ab",
+          "on-tertiary-fixed-variant": "#6900b3",
+          "primary-container": "#8083ff",
+          "surface-dim": "#0f131c",
+          "inverse-primary": "#494bd6",
+          "on-tertiary-container": "#400071",
+          "on-secondary-fixed": "#001f26",
+          "on-secondary-container": "#00424e",
+          "inverse-on-surface": "#2c303a",
+          "surface-bright": "#353943",
+          "surface-container": "#1c1f29",
+          "on-primary-fixed": "#07006c",
+          "on-primary": "#1000a9",
+          "on-primary-fixed-variant": "#2f2ebe",
+          "tertiary-fixed-dim": "#ddb7ff",
+          "on-primary-container": "#0d0096",
+          "outline": "#908fa0",
+          "on-surface-variant": "#c7c4d7",
+          "on-tertiary-fixed": "#2c0051",
+          "secondary-fixed-dim": "#4cd7f6",
+          "on-background": "#dfe2ef",
+          "on-surface": "#dfe2ef",
+          "surface-container-high": "#262a34",
+          "surface-tint": "#c0c1ff",
+          "outline-variant": "#464554",
+          "inverse-surface": "#dfe2ef",
+          "surface-container-low": "#181b25",
+          "tertiary-container": "#b76dff",
+          "tertiary-fixed": "#f0dbff"
+        },
+        "borderRadius": {
+          "DEFAULT": "1rem",
+          "lg": "2rem",
+          "xl": "3rem",
+          "full": "9999px"
+        },
+        "spacing": {
+          "margin": "1.25rem",
+          "gutter": "1rem",
+          "space-md": "1rem",
+          "space-sm": "0.5rem",
+          "space-xs": "0.25rem",
+          "space-lg": "1.5rem",
+          "space-xl": "2.25rem"
+        },
+        "fontFamily": {
+          "label-sm": ["Space Grotesk"],
+          "body-md": ["Plus Jakarta Sans"],
+          "body-lg": ["Plus Jakarta Sans"],
+          "display-lg": ["Sora"],
+          "label-md": ["Space Grotesk"],
+          "headline-md": ["Sora"],
+          "label-lg": ["Space Grotesk"],
+          "headline-sm": ["Sora"],
+          "body-sm": ["Plus Jakarta Sans"],
+          "display-lg-mobile": ["Sora"],
+          "headline-lg": ["Sora"]
+        },
+        "fontSize": {
+          "label-sm": ["10px", {"lineHeight": "14px", "letterSpacing": "0.08em", "fontWeight": "600"}],
+          "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+          "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+          "display-lg": ["40px", {"lineHeight": "48px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+          "label-md": ["12px", {"lineHeight": "16px", "letterSpacing": "0.06em", "fontWeight": "500"}],
+          "headline-md": ["22px", {"lineHeight": "28px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+          "label-lg": ["14px", {"lineHeight": "18px", "letterSpacing": "0.04em", "fontWeight": "500"}],
+          "headline-sm": ["18px", {"lineHeight": "24px", "fontWeight": "600"}],
+          "body-sm": ["12px", {"lineHeight": "16px", "fontWeight": "400"}],
+          "display-lg-mobile": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+          "headline-lg": ["28px", {"lineHeight": "36px", "letterSpacing": "-0.015em", "fontWeight": "600"}]
+        }
+      }
+    }
+  }
+  </script>
+<style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      display: inline-block;
+      line-height: 1;
+    }
+    @keyframes pulseRing {
+      0% { transform: scale(0.92); opacity: 0.8; }
+      50% { transform: scale(1.16); opacity: 0.25; }
+      100% { transform: scale(0.92); opacity: 0.8; }
+    }
+    @keyframes outerPulse {
+      0% { transform: scale(0.85); opacity: 0.4; }
+      50% { transform: scale(1.3); opacity: 0.08; }
+      100% { transform: scale(0.85); opacity: 0.4; }
+    }
+    .pulse-ring-active-1 {
+      animation: pulseRing 2.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    .pulse-ring-active-2 {
+      animation: outerPulse 3.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    .glow-sphere {
+      box-shadow: 0 0 45px rgba(6, 182, 212, 0.45), 0 0 15px rgba(99, 102, 241, 0.6);
+    }
+    .glass-card {
+      background: rgba(28, 31, 41, 0.82);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(192, 193, 255, 0.12);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-background min-h-screen flex justify-center font-body-md selection:bg-secondary selection:text-on-secondary antialiased">
+<!-- Mobile Viewport Container -->
+<div class="w-full max-w-md bg-background min-h-screen relative flex flex-col pb-24 overflow-x-hidden shadow-2xl">
+<!-- TopAppBar -->
+<header class="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-5 h-16 max-w-md mx-auto bg-surface/80 dark:bg-surface/80 backdrop-blur-md">
+<button aria-label="Go back" class="p-2 -ml-2 rounded-full hover:text-secondary dark:hover:text-secondary active:scale-95 transition-all text-on-surface-variant dark:text-on-surface-variant flex items-center justify-center" onclick="resetListeningState()">
+<span class="material-symbols-outlined" data-icon="arrow_back">arrow_back</span>
+</button>
+<h1 class="text-headline-sm font-headline-sm font-bold tracking-tight text-primary dark:text-primary">Find Song</h1>
+<button aria-label="Settings" class="p-2 -mr-2 rounded-full hover:text-secondary dark:hover:text-secondary active:scale-95 transition-all text-on-surface-variant dark:text-on-surface-variant flex items-center justify-center">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+</button>
+</header>
+<!-- Main Content Canvas -->
+<main class="flex-1 flex flex-col pt-20 px-5 relative z-10">
+<!-- Status Header -->
+<section class="text-center mt-3 mb-6">
+<div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-container-high border border-outline-variant/30 mb-2">
+<span class="w-2 h-2 rounded-full bg-secondary animate-ping"></span>
+<span class="text-label-sm font-label-sm uppercase tracking-wider text-secondary">Acoustic Engine Ready</span>
+</div>
+<h2 class="text-headline-lg font-headline-lg font-bold text-on-surface tracking-tight" id="view-title">Identify Song</h2>
+<p class="text-body-md font-body-md text-on-surface-variant max-w-xs mx-auto mt-1" id="view-subtitle">
+          Listening to live audio via acoustic fingerprinting
+        </p>
+</section>
+<!-- Container: Listening Mode (Hero Sphere) -->
+<div class="flex-1 flex flex-col items-center justify-center py-6 transition-all duration-500 opacity-100" id="listening-view">
+<!-- Acoustic Sensor Canvas Area -->
+<div class="relative flex items-center justify-center w-72 h-72 my-auto">
+<!-- Outer Pulsing Glow Wave 2 -->
+<div class="pulse-ring-active-2 absolute inset-0 rounded-full border border-secondary/20 bg-secondary/5 pointer-events-none"></div>
+<!-- Mid Pulsing Glow Wave 1 -->
+<div class="pulse-ring-active-1 absolute inset-6 rounded-full border border-primary/30 bg-primary/10 pointer-events-none"></div>
+<!-- Concentric Ring 3 (Metric Tick marks) -->
+<div class="absolute inset-12 rounded-full border border-dashed border-outline-variant/50 pointer-events-none"></div>
+<!-- Record/Listen Trigger Hero Sphere (160px diameter) -->
+<button class="relative z-20 w-40 h-40 rounded-full bg-gradient-to-tr from-surface-container-high via-surface-container to-surface-variant flex flex-col items-center justify-center p-3 glow-sphere border-2 border-secondary/80 active:scale-95 transition-all cursor-pointer group shadow-2xl" id="listen-hero-trigger" onclick="simulateFingerprintMatch()">
+<!-- Glass Core with Icon -->
+<div class="w-28 h-28 rounded-full bg-surface-container-lowest/90 border border-secondary/40 flex flex-col items-center justify-center gap-1 shadow-inner group-hover:border-secondary transition-colors">
+<span class="material-symbols-outlined text-secondary text-4xl transform group-hover:scale-110 transition-transform" data-icon="mic" data-weight="fill" style="font-variation-settings: 'FILL' 1;">mic</span>
+<div class="flex items-end gap-0.5 h-3">
+<span class="w-1 bg-secondary rounded-full h-2 animate-bounce"></span>
+<span class="w-1 bg-primary rounded-full h-3 animate-bounce [animation-delay:150ms]"></span>
+<span class="w-1 bg-secondary rounded-full h-1.5 animate-bounce [animation-delay:300ms]"></span>
+<span class="w-1 bg-primary rounded-full h-2.5 animate-bounce [animation-delay:75ms]"></span>
+</div>
+</div>
+</button>
+</div>
+<!-- Action instruction & Live Frequency Indicator -->
+<div class="text-center mt-6">
+<p class="text-label-lg font-label-lg uppercase tracking-wider text-secondary font-semibold">Tap to Listen</p>
+<p class="text-body-sm font-body-sm text-on-surface-variant/80 mt-1">Analyzing peak frequency spectrum</p>
+<!-- Waveform Visualizer Preview -->
+<div class="flex items-center justify-center gap-1.5 h-7 mt-4 px-4 py-1.5 rounded-full bg-surface-container-low border border-outline-variant/30 w-fit mx-auto">
+<span class="text-label-sm font-label-sm text-primary">44.1 kHz</span>
+<span class="w-1 h-1 rounded-full bg-outline"></span>
+<div class="flex items-end gap-1 h-3">
+<span class="w-0.5 bg-secondary h-2 rounded-full"></span>
+<span class="w-0.5 bg-primary h-3 rounded-full"></span>
+<span class="w-0.5 bg-secondary h-1.5 rounded-full"></span>
+<span class="w-0.5 bg-primary h-2.5 rounded-full"></span>
+<span class="w-0.5 bg-secondary h-2 rounded-full"></span>
+</div>
+<span class="w-1 h-1 rounded-full bg-outline"></span>
+<span class="text-label-sm font-label-sm text-secondary">Match Rate 99.4%</span>
+</div>
+</div>
+</div>
+<!-- Container: Revealed Identification Card (Hidden by default) -->
+<div class="hidden flex-col gap-4 pb-6 transition-all duration-500 opacity-0 translate-y-4" id="result-view">
+<!-- Main Music Analysis Card -->
+<div class="glass-card rounded-lg p-5 shadow-2xl relative overflow-hidden">
+<!-- Subtle Top Border Light Edge -->
+<div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-secondary to-transparent opacity-80"></div>
+<div class="flex gap-4 items-start">
+<!-- Album Cover Artwork -->
+<div class="relative w-24 h-24 rounded-lg overflow-hidden flex-shrink-0 shadow-lg border border-outline-variant/40 bg-surface-container-highest">
+<img class="w-full h-full object-cover" data-alt="A vivid modern indie synthwave album cover for Hurry Up, We're Dreaming featuring an atmospheric nocturnal city skyline glowing with high-voltage indigo and cyan neon lights against deep obsidian slate shadows." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBdZ33FLCKPoZJgu7LSlRKcorOTyPaF7EZWrjgyEqZq3qLnixhk8_ouy2Gt_oOxFiWQDuN7mlRL8lM94GJH3ytZVTB5oqaYbVhVz-GE0OBMC-hw8ja7-2D3z7t3HuBnshZ7N6jdp5nixm60JE2jljwdz1Xu1cDdP46mT-E7rSnBZaaqAE6zJ6QvBIX1I1uh6X7JPAPuzaP11Ai3D0OHGXqyrnKtHTgA1-INIT9QaPP8WgwTh2k0l4IjEA"/>
+<div class="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-surface-container-lowest/90 border border-secondary/40 text-[9px] font-label-sm font-bold text-secondary">FLAC</div>
+</div>
+<!-- Track Metadata Details -->
+<div class="flex-1 min-w-0">
+<div class="flex items-center gap-1.5">
+<span class="text-label-sm font-label-sm text-secondary uppercase tracking-widest font-bold">Fingerprint Matched</span>
+<span class="material-symbols-outlined text-secondary text-sm" data-icon="verified" data-weight="fill" style="font-variation-settings: 'FILL' 1;">verified</span>
+</div>
+<h3 class="text-headline-md font-headline-md text-on-surface font-bold tracking-tight truncate mt-0.5">Midnight City</h3>
+<p class="text-body-md font-body-md text-primary font-medium truncate">M83</p>
+<p class="text-body-sm font-body-sm text-on-surface-variant truncate mt-0.5">Hurry Up, We're Dreaming (10th Anniversary)</p>
+</div>
+</div>
+<!-- Acoustic Data Metric Chips -->
+<div class="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-outline-variant/20">
+<div class="bg-surface-container-low/70 px-2.5 py-1.5 rounded border border-outline-variant/30 flex flex-col items-center">
+<span class="text-label-sm font-label-sm text-on-surface-variant uppercase">Key</span>
+<span class="text-label-md font-label-md font-bold text-on-surface">B Minor</span>
+</div>
+<div class="bg-surface-container-low/70 px-2.5 py-1.5 rounded border border-outline-variant/30 flex flex-col items-center">
+<span class="text-label-sm font-label-sm text-on-surface-variant uppercase">Tempo</span>
+<span class="text-label-md font-label-md font-bold text-secondary">105 BPM</span>
+</div>
+<div class="bg-surface-container-low/70 px-2.5 py-1.5 rounded border border-outline-variant/30 flex flex-col items-center">
+<span class="text-label-sm font-label-sm text-on-surface-variant uppercase">Confidence</span>
+<span class="text-label-md font-label-md font-bold text-primary">99.8%</span>
+</div>
+</div>
+<!-- Audio Waveform Progress Scrubber -->
+<div class="mt-5 bg-surface-container-low p-3.5 rounded-lg border border-outline-variant/20">
+<div class="flex items-center justify-between gap-3">
+<button aria-label="Play or pause audio preview" class="w-10 h-10 rounded-full bg-secondary text-on-secondary flex items-center justify-center flex-shrink-0 active:scale-95 transition-transform shadow-lg shadow-secondary/30" id="playback-btn" onclick="togglePlayPause()">
+<span class="material-symbols-outlined text-2xl" data-icon="play_arrow" data-weight="fill" id="playback-icon" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+</button>
+<div class="flex-1 flex flex-col gap-1.5">
+<!-- Visualizer Waveform Bar Array -->
+<div class="flex items-end justify-between h-7 gap-0.5 px-1">
+<span class="w-1 bg-secondary h-3 rounded-full"></span>
+<span class="w-1 bg-secondary h-5 rounded-full"></span>
+<span class="w-1 bg-secondary h-4 rounded-full"></span>
+<span class="w-1 bg-secondary h-6 rounded-full"></span>
+<span class="w-1 bg-secondary h-3 rounded-full"></span>
+<span class="w-1 bg-secondary h-7 rounded-full"></span>
+<span class="w-1 bg-secondary h-5 rounded-full"></span>
+<span class="w-1 bg-secondary h-4 rounded-full"></span>
+<span class="w-1 bg-surface-variant h-6 rounded-full"></span>
+<span class="w-1 bg-surface-variant h-3 rounded-full"></span>
+<span class="w-1 bg-surface-variant h-5 rounded-full"></span>
+<span class="w-1 bg-surface-variant h-4 rounded-full"></span>
+<span class="w-1 bg-surface-variant h-7 rounded-full"></span>
+<span class="w-1 bg-surface-variant h-5 rounded-full"></span>
+<span class="w-1 bg-surface-variant h-2 rounded-full"></span>
+<span class="w-1 bg-surface-variant h-4 rounded-full"></span>
+<span class="w-1 bg-surface-variant h-6 rounded-full"></span>
+</div>
+<!-- Progress Line Indicator -->
+<div class="relative w-full h-1.5 bg-surface-variant rounded-full overflow-hidden">
+<div class="absolute top-0 left-0 h-full w-[22%] bg-gradient-to-r from-primary to-secondary"></div>
+</div>
+</div>
+<!-- Time display -->
+<div class="text-right flex-shrink-0">
+<p class="text-label-sm font-label-sm text-secondary font-bold">0:45</p>
+<p class="text-label-sm font-label-sm text-on-surface-variant">4:03</p>
+</div>
+</div>
+</div>
+<!-- Quick Action Buttons -->
+<div class="grid grid-cols-4 gap-2 mt-4">
+<!-- Spotify -->
+<button class="flex flex-col items-center justify-center p-2.5 rounded bg-surface-container hover:border-secondary/50 border border-outline-variant/30 active:scale-95 transition-all text-on-surface group">
+<span class="material-symbols-outlined text-secondary group-hover:scale-110 transition-transform" data-icon="podcasts">podcasts</span>
+<span class="text-label-sm font-label-sm mt-1 text-on-surface-variant group-hover:text-on-surface">Spotify</span>
+</button>
+<!-- Apple Music -->
+<button class="flex flex-col items-center justify-center p-2.5 rounded bg-surface-container hover:border-secondary/50 border border-outline-variant/30 active:scale-95 transition-all text-on-surface group">
+<span class="material-symbols-outlined text-primary group-hover:scale-110 transition-transform" data-icon="music_note">music_note</span>
+<span class="text-label-sm font-label-sm mt-1 text-on-surface-variant group-hover:text-on-surface">Apple</span>
+</button>
+<!-- Share -->
+<button class="flex flex-col items-center justify-center p-2.5 rounded bg-surface-container hover:border-secondary/50 border border-outline-variant/30 active:scale-95 transition-all text-on-surface group">
+<span class="material-symbols-outlined text-secondary group-hover:scale-110 transition-transform" data-icon="share">share</span>
+<span class="text-label-sm font-label-sm mt-1 text-on-surface-variant group-hover:text-on-surface">Share</span>
+</button>
+<!-- Lyrics -->
+<button class="flex flex-col items-center justify-center p-2.5 rounded bg-surface-container hover:border-secondary/50 border border-outline-variant/30 active:scale-95 transition-all text-on-surface group">
+<span class="material-symbols-outlined text-primary group-hover:scale-110 transition-transform" data-icon="lyrics">lyrics</span>
+<span class="text-label-sm font-label-sm mt-1 text-on-surface-variant group-hover:text-on-surface">Lyrics</span>
+</button>
+</div>
+</div>
+<!-- Secondary Bottom Action: Scan Another Song -->
+<button class="w-full py-3.5 px-6 rounded-full bg-surface-container-high border border-outline-variant/40 hover:border-secondary active:scale-95 transition-all flex items-center justify-center gap-2 text-on-surface font-label-md uppercase tracking-wider font-semibold shadow-lg" onclick="resetListeningState()">
+<span class="material-symbols-outlined text-secondary" data-icon="autorenew">autorenew</span>
+<span>Scan Another Song</span>
+</button>
+</div>
+</main>
+<!-- BottomNavBar (Shared Component JSON Anchored) -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 py-2 max-w-md mx-auto bg-surface-container/90 dark:bg-surface-container/90 backdrop-blur-xl rounded-t-2xl shadow-2xl shadow-primary/5">
+<!-- Destination 1: Home (Inactive) -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-surface-variant gap-1 hover:text-secondary dark:hover:text-secondary transition-colors duration-150 active:scale-95" href="#">
+<span class="material-symbols-outlined" data-icon="home">home</span>
+<span class="text-label-sm font-label-sm tracking-wider uppercase">Home</span>
+</a>
+<!-- Destination 2: Identify (ACTIVE STATE) -->
+<a class="flex flex-col items-center justify-center text-secondary dark:text-secondary font-semibold gap-1 hover:text-secondary dark:hover:text-secondary transition-colors duration-150 active:scale-95" href="#">
+<span class="material-symbols-outlined" data-icon="mic" data-weight="fill" style="font-variation-settings: 'FILL' 1;">mic</span>
+<span class="text-label-sm font-label-sm tracking-wider uppercase">Identify</span>
+</a>
+<!-- Destination 3: Analyzer (Inactive) -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-surface-variant gap-1 hover:text-secondary dark:hover:text-secondary transition-colors duration-150 active:scale-95" href="#">
+<span class="material-symbols-outlined" data-icon="analytics">analytics</span>
+<span class="text-label-sm font-label-sm tracking-wider uppercase">Analyzer</span>
+</a>
+<!-- Destination 4: Library (Inactive) -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-surface-variant gap-1 hover:text-secondary dark:hover:text-secondary transition-colors duration-150 active:scale-95" href="#">
+<span class="material-symbols-outlined" data-icon="library_music">library_music</span>
+<span class="text-label-sm font-label-sm tracking-wider uppercase">Library</span>
+</a>
+</nav>
+</div>
+<!-- Interactive Demo Logic -->
+<script>
+    let isPlaying = false;
+
+    function simulateFingerprintMatch() {
+      const listeningView = document.getElementById('listening-view');
+      const resultView = document.getElementById('result-view');
+      const viewTitle = document.getElementById('view-title');
+      const viewSubtitle = document.getElementById('view-subtitle');
+
+      // Smooth exit of listener
+      listeningView.classList.add('opacity-0', 'scale-95');
+      
+      setTimeout(() => {
+        listeningView.classList.add('hidden');
+        listeningView.classList.remove('flex');
+        
+        // Show result
+        resultView.classList.remove('hidden');
+        resultView.classList.add('flex');
+        
+        // Re-flow trigger for transition
+        setTimeout(() => {
+          resultView.classList.remove('opacity-0', 'translate-y-4');
+          resultView.classList.add('opacity-100', 'translate-y-0');
+        }, 30);
+
+        viewTitle.textContent = 'Match Found';
+        viewSubtitle.textContent = 'Standard acoustic fingerprint verified';
+      }, 300);
+    }
+
+    function resetListeningState() {
+      const listeningView = document.getElementById('listening-view');
+      const resultView = document.getElementById('result-view');
+      const viewTitle = document.getElementById('view-title');
+      const viewSubtitle = document.getElementById('view-subtitle');
+
+      resultView.classList.add('opacity-0', 'translate-y-4');
+
+      setTimeout(() => {
+        resultView.classList.add('hidden');
+        resultView.classList.remove('flex');
+
+        listeningView.classList.remove('hidden');
+        listeningView.classList.add('flex');
+
+        setTimeout(() => {
+          listeningView.classList.remove('opacity-0', 'scale-95');
+          listeningView.classList.add('opacity-100', 'scale-100');
+        }, 30);
+
+        viewTitle.textContent = 'Identify Song';
+        viewSubtitle.textContent = 'Listening to live audio via acoustic fingerprinting';
+        
+        // Reset playback
+        isPlaying = false;
+        const icon = document.getElementById('playback-icon');
+        if (icon) {
+          icon.textContent = 'play_arrow';
+        }
+      }, 300);
+    }
+
+    function togglePlayPause() {
+      isPlaying = !isPlaying;
+      const icon = document.getElementById('playback-icon');
+      if (icon) {
+        icon.textContent = isPlaying ? 'pause' : 'play_arrow';
+      }
+    }
+  </script>
+</body></html>

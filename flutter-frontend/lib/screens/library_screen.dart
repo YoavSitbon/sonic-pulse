@@ -219,7 +219,20 @@ class _LibraryCard extends StatelessWidget {
                 ],
               ),
             ),
-            child: Icon(Icons.music_note_rounded, color: accentColor, size: 24),
+            child: result.artworkUrl == null
+                ? Icon(Icons.music_note_rounded, color: accentColor, size: 24)
+                : ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.network(
+                      result.artworkUrl!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Icon(
+                        Icons.music_note_rounded,
+                        color: accentColor,
+                        size: 24,
+                      ),
+                    ),
+                  ),
           ),
           const SizedBox(width: 12),
 

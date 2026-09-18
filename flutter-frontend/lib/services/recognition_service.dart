@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../models/track_result.dart';
@@ -19,7 +20,7 @@ class RecognitionService {
     final uri = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.recognizeEndpoint}');
     final request = http.MultipartRequest('POST', uri);
     request.files.add(
-      await http.MultipartFile.fromPath('audio', audioFilePath,
+      await http.MultipartFile.fromPath('file', audioFilePath,
           filename: 'recording.wav'),
     );
 
@@ -32,6 +33,50 @@ class RecognitionService {
       );
     }
 
+    try {
+      return TrackResult.fromJsonString(response.body);
+    } catch (e) {
+      throw RecognitionException('Failed to parse server response: $e');
+    }
+  }
+
+  /// Sends the title and artist chosen in the public music catalogue to the
+  /// backend for the same analysis flow used by an identified recording.
+  Future<TrackResult> analyzeSelectedSong({
+    required String title,
+    required String artist,
+  }) async {
+    if (ApiConfig.useMockResponses) {
+      await Future.delayed(const Duration(milliseconds: 700));
+      final mock = MockResponses.analyze();
+      return TrackResult(
+        title: title,
+        artist: artist,
+        album: mock.album,
+        key: mock.key,
+        bpm: mock.bpm,
+        confidence: 1,
+        chords: mock.chords,
+        mood: mock.mood,
+        camelot: mock.camelot,
+        timeSig: mock.timeSig,
+        timestamp: DateTime.now(),
+      );
+    }
+
+    final response = await http
+        .post(
+          Uri.parse('${ApiConfig.baseUrl}${ApiConfig.selectedSongEndpoint}'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'title': title, 'artist': artist}),
+        )
+        .timeout(ApiConfig.requestTimeout);
+
+    if (response.statusCode != 200) {
+      throw RecognitionException(
+        'Server error ${response.statusCode}: ${response.body}',
+      );
+    }
     try {
       return TrackResult.fromJsonString(response.body);
     } catch (e) {

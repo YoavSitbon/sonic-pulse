@@ -18,11 +18,13 @@ class ApiConfig {
   // ── Endpoints ────────────────────────────────────────────────────
   static const String recognizeEndpoint = '/api/recognize-chords';
   static const String analyzeEndpoint = '/api/analyze';
+  /// Receives a user-selected catalogue song as JSON: `{title, artist}`.
+  static const String selectedSongEndpoint = '/api/analyze-song';
 
   // ── Timeouts ─────────────────────────────────────────────────────
   static const Duration requestTimeout = Duration(seconds: 30);
 
   // ── Recording ────────────────────────────────────────────────────
   /// Seconds of audio to capture before sending to backend.
-  static const int recordingSeconds = 5;
+  static const int recordingSeconds = 10;
 }

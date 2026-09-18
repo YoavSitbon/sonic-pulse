@@ -12,6 +12,7 @@ import '../providers/app_state.dart';
 import '../config/api_config.dart';
 import 'home_screen.dart';
 import 'find_song_screen.dart';
+import 'library_screen.dart';
 
 // ─────────────────────────────────────────────────────────────
 // Screen states
@@ -180,6 +181,11 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
             Navigator.pushReplacement(
               context,
               MaterialPageRoute(builder: (_) => const FindSongScreen()),
+            );
+          } else if (i == 3) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (_) => const LibraryScreen()),
             );
           }
         },
