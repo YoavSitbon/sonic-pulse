@@ -228,6 +228,7 @@ resource "kubernetes_deployment_v1" "chord" {
             name           = "http"
             container_port = 8080
           }
+          env_from { config_map_ref { name = kubernetes_config_map_v1.runtime.metadata[0].name } }
           env {
             name  = "SERVICE_ROLE"
             value = "chord"
@@ -282,6 +283,7 @@ resource "kubernetes_deployment_v1" "beat" {
             name           = "http"
             container_port = 8080
           }
+          env_from { config_map_ref { name = kubernetes_config_map_v1.runtime.metadata[0].name } }
           env {
             name  = "SERVICE_ROLE"
             value = "beat"

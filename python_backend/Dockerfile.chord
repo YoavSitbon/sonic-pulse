@@ -1,0 +1,75 @@
+# Chord-recognition worker. It deliberately excludes beat-model code/checkpoints.
+FROM python:3.10-slim AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    ffmpeg \
+    git \
+    libsndfile1-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements-audio-common.txt requirements-chord.txt ./
+
+RUN pip install --no-cache-dir --upgrade pip "setuptools==79.0.1" wheel \
+    && pip install --no-cache-dir "Cython>=0.29.0" \
+    && pip install --no-cache-dir -r requirements-chord.txt \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.6.0 \
+    && pip install --no-cache-dir --no-deps spleeter==2.3.2
+
+FROM python:3.10-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ffmpeg \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY app.py app_factory.py config.py extensions.py error_handlers.py ./
+COPY config/ config/
+COPY compat/ compat/
+COPY utils/ utils/
+COPY blueprints/health/ blueprints/health/
+COPY blueprints/chords/ blueprints/chords/
+COPY services/audio/__init__.py services/audio/audio_utils.py services/audio/chord_recognition_service.py services/audio/chord_utils.py services/audio/spleeter_service.py services/audio/tempfiles.py services/audio/
+COPY services/detectors/__init__.py services/detectors/chord_cnn_lstm_detector.py services/detectors/btc_sl_detector.py services/detectors/btc_pl_detector.py services/detectors/
+COPY models/__init__.py models/__init__.py
+COPY models/Chord-CNN-LSTM/ models/Chord-CNN-LSTM/
+
+RUN useradd --create-home --shell /bin/bash --uid 1001 app \
+    && chown -R app:app /app
+
+USER app
+
+# Chord separation uses Spleeter's two-stem model. Keeping it in this image
+# makes the optional use_spleeter request deterministic and avoids a download
+# during a user request.
+RUN mkdir -p /home/app/.cache/spleeter/pretrained_models/2stems \
+    && cd /home/app/.cache/spleeter/pretrained_models/2stems \
+    && curl -fsSL -o 2stems.tar.gz https://github.com/deezer/spleeter/releases/download/v1.4.0/2stems.tar.gz \
+    && tar -xzf 2stems.tar.gz \
+    && rm 2stems.tar.gz \
+    && test -f checkpoint
+
+ENV FLASK_ENV=production \
+    FLASK_DEBUG=False \
+    SERVICE_ROLE=chord \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -fsS http://localhost:8080/health || exit 1
+
+# One worker prevents duplicate in-memory model instances per pod.
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--timeout", "600", "--worker-class", "sync", "--max-requests", "1000", "--max-requests-jitter", "100", "--preload", "app:app"]

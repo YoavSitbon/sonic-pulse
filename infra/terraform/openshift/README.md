@@ -18,18 +18,17 @@ From `python_backend/`:
 
 ```bash
 podman build -f Dockerfile.api -t <registry>/sonic-pulse/api:dev .
-podman build -f Dockerfile --build-arg SERVICE_ROLE=chord -t <registry>/sonic-pulse/chord:dev .
-podman build -f Dockerfile --build-arg SERVICE_ROLE=beat -t <registry>/sonic-pulse/beat:dev .
+podman build -f Dockerfile.chord -t <registry>/sonic-pulse/chord:dev .
+podman build -f Dockerfile.beat -t <registry>/sonic-pulse/beat:dev .
 podman push <registry>/sonic-pulse/api:dev
 podman push <registry>/sonic-pulse/chord:dev
 podman push <registry>/sonic-pulse/beat:dev
 ```
 
-The API image excludes the ML dependencies and does not initialize them when
-`SERVICE_ROLE=api`. The chord and beat roles are separate runtime services,
-although the first image iteration still shares the heavy dependency base;
-dependency/image slimming can be done after the service boundaries are
-validated.
+The API image excludes ML dependencies and does not initialize them when
+`SERVICE_ROLE=api`. The chord and beat images have independent requirements,
+copy only their respective model files, and each runs one model-owning worker
+per pod.
 
 SongFormer is not deployed yet because its runtime and checkpoint are not
 present in this repository. Spleeter remains an optional chord preprocessing

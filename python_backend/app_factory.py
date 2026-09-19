@@ -71,30 +71,35 @@ def register_blueprints(app: Flask, config) -> None:
         app: Flask application instance
         config: Configuration object
     """
-    # Import blueprints
+    # Health is the only route shared by every service. Keep imports for the
+    # internal services isolated: importing the API blueprints pulls in Shazam,
+    # lyrics, and AI dependencies that chord/beat workers do not need.
     from blueprints.health import health_bp
-    from blueprints.docs import docs_bp
-    from blueprints.beats import beats_bp
-    from blueprints.chords import chords_bp
-    from blueprints.lyrics import lyrics_bp
-    from blueprints.songformer import songformer_bp
-    from blueprints.debug import debug_bp
-    from blueprints.tabs import tabs_bp
-    from blueprints.tabs.routes import register_socket_routes
-    from blueprints.music_ai import music_ai_bp
-    from blueprints.audio_proxy import audio_proxy_bp
-
-    # Register blueprints
     app.register_blueprint(health_bp)
-    app.register_blueprint(docs_bp)
+
     if config.SERVICE_ROLE in ('audio', 'chord', 'beat'):
+        from blueprints.beats import beats_bp
+        from blueprints.chords import chords_bp
+
         if config.SERVICE_ROLE in ('audio', 'beat'):
             app.register_blueprint(beats_bp)
         if config.SERVICE_ROLE in ('audio', 'chord'):
             app.register_blueprint(chords_bp)
         if config.SERVICE_ROLE == 'audio':
+            from blueprints.songformer import songformer_bp
             app.register_blueprint(songformer_bp)
     else:
+        from blueprints.docs import docs_bp
+        from blueprints.beats import beats_bp
+        from blueprints.chords import chords_bp
+        from blueprints.lyrics import lyrics_bp
+        from blueprints.songformer import songformer_bp
+        from blueprints.tabs import tabs_bp
+        from blueprints.tabs.routes import register_socket_routes
+        from blueprints.music_ai import music_ai_bp
+        from blueprints.audio_proxy import audio_proxy_bp
+
+        app.register_blueprint(docs_bp)
         app.register_blueprint(lyrics_bp)
         app.register_blueprint(tabs_bp)
         app.register_blueprint(music_ai_bp)
@@ -108,6 +113,7 @@ def register_blueprints(app: Flask, config) -> None:
 
     # Register debug blueprint only in non-production mode
     if not config.PRODUCTION_MODE:
+        from blueprints.debug import debug_bp
         app.register_blueprint(debug_bp)
         log_info("Debug blueprint registered (non-production mode)")
     else:
@@ -126,7 +132,7 @@ def init_services(app: Flask, config) -> None:
     """
     # Setup model paths for imports
     from utils.paths import setup_model_paths
-    setup_model_paths()
+    setup_model_paths(config.SERVICE_ROLE)
 
     # Create a simple service container
     services = {}
