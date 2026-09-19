@@ -39,7 +39,7 @@ def create_app(config_name: Optional[str] = None) -> Flask:
     config = get_config(config_name)
     app.config.from_object(config)
 
-    if config.SERVICE_ROLE in ('audio', 'monolith'):
+    if config.SERVICE_ROLE in ('audio', 'chord', 'beat', 'monolith'):
         import compat
         compat.apply_all()
 
@@ -87,15 +87,18 @@ def register_blueprints(app: Flask, config) -> None:
     # Register blueprints
     app.register_blueprint(health_bp)
     app.register_blueprint(docs_bp)
-    if config.SERVICE_ROLE == 'audio':
-        app.register_blueprint(beats_bp)
-        app.register_blueprint(chords_bp)
-        app.register_blueprint(songformer_bp)
+    if config.SERVICE_ROLE in ('audio', 'chord', 'beat'):
+        if config.SERVICE_ROLE in ('audio', 'beat'):
+            app.register_blueprint(beats_bp)
+        if config.SERVICE_ROLE in ('audio', 'chord'):
+            app.register_blueprint(chords_bp)
+        if config.SERVICE_ROLE == 'audio':
+            app.register_blueprint(songformer_bp)
     else:
         app.register_blueprint(lyrics_bp)
         app.register_blueprint(tabs_bp)
         app.register_blueprint(music_ai_bp)
-        if config.AUDIO_SERVICE_URL:
+        if config.AUDIO_SERVICE_URL or config.CHORD_SERVICE_URL or config.BEAT_SERVICE_URL:
             app.register_blueprint(audio_proxy_bp)
         else:
             app.register_blueprint(beats_bp)
@@ -128,14 +131,16 @@ def init_services(app: Flask, config) -> None:
     # Create a simple service container
     services = {}
 
-    if config.SERVICE_ROLE == 'audio' or not config.AUDIO_SERVICE_URL:
-        _init_audio_services(services)
+    if config.SERVICE_ROLE in ('audio', 'chord', 'beat') or not (
+        config.AUDIO_SERVICE_URL or config.CHORD_SERVICE_URL or config.BEAT_SERVICE_URL
+    ):
+        _init_audio_services(services, config.SERVICE_ROLE)
     else:
         services['beat_detection'] = None
         services['chord_recognition'] = None
         services['songformer'] = None
 
-    if config.SERVICE_ROLE == 'audio':
+    if config.SERVICE_ROLE in ('audio', 'chord', 'beat'):
         services['lyrics'] = None
         services['music_ai'] = None
     else:
@@ -161,28 +166,37 @@ def init_services(app: Flask, config) -> None:
     log_info("Service container initialized")
 
 
-def _init_audio_services(services: dict) -> None:
-    """Initialize heavy audio services only in the audio role."""
-    try:
-        from services.audio.beat_detection_service import BeatDetectionService
-        services['beat_detection'] = BeatDetectionService()
-        log_info("Beat detection service initialized")
-    except Exception as e:
-        log_info(f"Failed to initialize beat detection service: {e}")
+def _init_audio_services(services: dict, role: str) -> None:
+    """Initialize only the model family owned by this service role."""
+    if role in ('audio', 'beat', 'monolith'):
+        try:
+            from services.audio.beat_detection_service import BeatDetectionService
+            services['beat_detection'] = BeatDetectionService()
+            log_info("Beat detection service initialized")
+        except Exception as e:
+            log_info(f"Failed to initialize beat detection service: {e}")
+            services['beat_detection'] = None
+    else:
         services['beat_detection'] = None
 
-    try:
-        from services.audio.chord_recognition_service import ChordRecognitionService
-        services['chord_recognition'] = ChordRecognitionService()
-        log_info("Chord recognition service initialized")
-    except Exception as e:
-        log_info(f"Failed to initialize chord recognition service: {e}")
+    if role in ('audio', 'chord', 'monolith'):
+        try:
+            from services.audio.chord_recognition_service import ChordRecognitionService
+            services['chord_recognition'] = ChordRecognitionService()
+            log_info("Chord recognition service initialized")
+        except Exception as e:
+            log_info(f"Failed to initialize chord recognition service: {e}")
+            services['chord_recognition'] = None
+    else:
         services['chord_recognition'] = None
 
-    try:
-        from services.audio.songformer_service import SongFormerService
-        services['songformer'] = SongFormerService()
-        log_info("SongFormer service initialized")
-    except Exception as e:
-        log_info(f"Failed to initialize SongFormer service: {e}")
+    if role in ('audio', 'monolith'):
+        try:
+            from services.audio.songformer_service import SongFormerService
+            services['songformer'] = SongFormerService()
+            log_info("SongFormer service initialized")
+        except Exception as e:
+            log_info(f"Failed to initialize SongFormer service: {e}")
+            services['songformer'] = None
+    else:
         services['songformer'] = None

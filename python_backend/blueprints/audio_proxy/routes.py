@@ -8,18 +8,22 @@ from extensions import limiter
 
 audio_proxy_bp = Blueprint("audio_proxy", __name__)
 
-_AUDIO_PATHS = (
-    "/api/recognize-chords",
-    "/api/recognize-chords-firebase",
-    "/api/detect-beats",
-    "/api/detect-beats-firebase",
-    "/api/songformer/segment",
-)
+_SERVICE_PATHS = {
+    "/api/recognize-chords": "CHORD_SERVICE_URL",
+    "/api/recognize-chords-firebase": "CHORD_SERVICE_URL",
+    "/api/detect-beats": "BEAT_SERVICE_URL",
+    "/api/detect-beats-firebase": "BEAT_SERVICE_URL",
+    "/api/songformer/segment": "AUDIO_SERVICE_URL",
+}
 
 
 @limiter.limit("2 per minute")
 def _forward(path: str):
-    base_url = current_app.config.get("AUDIO_SERVICE_URL", "").rstrip("/")
+    service_key = _SERVICE_PATHS.get(path, "AUDIO_SERVICE_URL")
+    base_url = (
+        current_app.config.get(service_key, "")
+        or current_app.config.get("AUDIO_SERVICE_URL", "")
+    ).rstrip("/")
     if not base_url:
         return {"success": False, "error": "Audio service is not configured."}, 503
 
@@ -54,7 +58,7 @@ def _forward(path: str):
     )
 
 
-for _path in _AUDIO_PATHS:
+for _path in tuple(_SERVICE_PATHS):
     audio_proxy_bp.add_url_rule(
         _path,
         endpoint=f"proxy_{_path.strip('/').replace('/', '_').replace('-', '_')}",

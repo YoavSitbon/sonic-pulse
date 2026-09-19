@@ -23,6 +23,8 @@ class Config:
     # the audio role loads the heavy local models.
     SERVICE_ROLE = os.environ.get('SERVICE_ROLE', 'monolith')
     AUDIO_SERVICE_URL = os.environ.get('AUDIO_SERVICE_URL', '').rstrip('/')
+    CHORD_SERVICE_URL = os.environ.get('CHORD_SERVICE_URL', '').rstrip('/')
+    BEAT_SERVICE_URL = os.environ.get('BEAT_SERVICE_URL', '').rstrip('/')
 
     # Production mode detection
     PRODUCTION_MODE = (

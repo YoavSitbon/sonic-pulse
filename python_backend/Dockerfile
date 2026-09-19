@@ -62,7 +62,6 @@ COPY app.py .
 COPY app_factory.py .
 COPY config.py .
 COPY config/ config/
-COPY templates/ templates/
 COPY services/ services/
 COPY blueprints/ blueprints/
 COPY models/ models/
@@ -106,10 +105,12 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8080/ || exit 1
 
+ARG SERVICE_ROLE=audio
+
 # Set environment variables
 ENV FLASK_ENV=production
 ENV FLASK_DEBUG=False
-ENV SERVICE_ROLE=audio
+ENV SERVICE_ROLE=${SERVICE_ROLE}
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 

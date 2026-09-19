@@ -1,6 +1,7 @@
 namespace        = "sonic-pulse"
 api_image        = "image-registry.example/sonic-pulse/api:dev"
-audio_image      = "image-registry.example/sonic-pulse/audio:dev"
+chord_image      = "image-registry.example/sonic-pulse/chord:dev"
+beat_image       = "image-registry.example/sonic-pulse/beat:dev"
 qwen_image       = "vllm/vllm-openai:latest"
 qwen_model       = "Qwen/Qwen3-8B"
 qwen_served_model = "qwen3-8b"

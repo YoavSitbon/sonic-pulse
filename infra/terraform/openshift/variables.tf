@@ -17,7 +17,11 @@ variable "api_image" {
   type = string
 }
 
-variable "audio_image" {
+variable "chord_image" {
+  type = string
+}
+
+variable "beat_image" {
   type = string
 }
 
@@ -56,14 +60,19 @@ variable "api_replicas" {
   default = 2
 }
 
-variable "audio_replicas" {
+variable "chord_replicas" {
+  type    = number
+  default = 1
+}
+
+variable "beat_replicas" {
   type    = number
   default = 1
 }
 
 variable "qwen_replicas" {
   type    = number
-  default = 1
+  default = 0
 }
 
 variable "api_route_host" {

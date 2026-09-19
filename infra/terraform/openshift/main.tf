@@ -24,7 +24,8 @@ resource "kubernetes_config_map_v1" "runtime" {
 
   data = {
     SERVICE_ROLE           = "api"
-    AUDIO_SERVICE_URL      = "http://audio-analysis:8080"
+    CHORD_SERVICE_URL      = "http://chord-service:8080"
+    BEAT_SERVICE_URL       = "http://beat-service:8080"
     MUSIC_AI_BASE_URL      = "http://qwen-inference:8000/v1"
     MUSIC_AI_MODEL         = var.qwen_served_model
     AUDIO_SERVICE_TIMEOUT  = "600"
@@ -78,14 +79,14 @@ resource "kubernetes_service_v1" "api" {
   }
 }
 
-resource "kubernetes_service_v1" "audio" {
+resource "kubernetes_service_v1" "chord" {
   metadata {
-    name      = "audio-analysis"
+    name      = "chord-service"
     namespace = var.namespace
     labels    = local.labels
   }
   spec {
-    selector = { component = "audio-analysis" }
+    selector = { component = "chord-service" }
     port {
       name        = "http"
       port        = 8080
@@ -185,17 +186,33 @@ resource "kubernetes_deployment_v1" "api" {
   }
 }
 
-resource "kubernetes_deployment_v1" "audio" {
+resource "kubernetes_service_v1" "beat" {
   metadata {
-    name      = "audio-analysis"
+    name      = "beat-service"
     namespace = var.namespace
     labels    = local.labels
   }
   spec {
-    replicas = var.audio_replicas
-    selector { match_labels = { component = "audio-analysis" } }
+    selector = { component = "beat-service" }
+    port {
+      name        = "http"
+      port        = 8080
+      target_port = 8080
+    }
+  }
+}
+
+resource "kubernetes_deployment_v1" "chord" {
+  metadata {
+    name      = "chord-service"
+    namespace = var.namespace
+    labels    = local.labels
+  }
+  spec {
+    replicas = var.chord_replicas
+    selector { match_labels = { component = "chord-service" } }
     template {
-      metadata { labels = { component = "audio-analysis" } }
+      metadata { labels = { component = "chord-service" } }
       spec {
         dynamic "image_pull_secrets" {
           for_each = var.image_pull_secret_name == null ? [] : [var.image_pull_secret_name]
@@ -204,8 +221,8 @@ resource "kubernetes_deployment_v1" "audio" {
           }
         }
         container {
-          name              = "audio-analysis"
-          image             = var.audio_image
+          name              = "chord-service"
+          image             = var.chord_image
           image_pull_policy = "IfNotPresent"
           port {
             name           = "http"
@@ -213,7 +230,7 @@ resource "kubernetes_deployment_v1" "audio" {
           }
           env {
             name  = "SERVICE_ROLE"
-            value = "audio"
+            value = "chord"
           }
           readiness_probe {
             http_get {
@@ -228,6 +245,54 @@ resource "kubernetes_deployment_v1" "audio" {
               path = "/health"
               port = 8080
             }
+            initial_delay_seconds = 120
+            period_seconds        = 30
+          }
+          resources {
+            requests = { cpu = "2", memory = "6Gi" }
+            limits   = { cpu = "6", memory = "12Gi" }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_deployment_v1" "beat" {
+  metadata {
+    name      = "beat-service"
+    namespace = var.namespace
+    labels    = local.labels
+  }
+  spec {
+    replicas = var.beat_replicas
+    selector { match_labels = { component = "beat-service" } }
+    template {
+      metadata { labels = { component = "beat-service" } }
+      spec {
+        dynamic "image_pull_secrets" {
+          for_each = var.image_pull_secret_name == null ? [] : [var.image_pull_secret_name]
+          content { name = image_pull_secrets.value }
+        }
+        container {
+          name              = "beat-service"
+          image             = var.beat_image
+          image_pull_policy = "IfNotPresent"
+          port {
+            name           = "http"
+            container_port = 8080
+          }
+          env {
+            name  = "SERVICE_ROLE"
+            value = "beat"
+          }
+          readiness_probe {
+            http_get { path = "/health" port = 8080 }
+            initial_delay_seconds = 60
+            period_seconds        = 15
+          }
+          liveness_probe {
+            http_get { path = "/health" port = 8080 }
             initial_delay_seconds = 120
             period_seconds        = 30
           }
