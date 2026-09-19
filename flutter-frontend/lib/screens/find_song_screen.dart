@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import '../theme/app_colors.dart';
 import '../widgets/bottom_nav_bar.dart';
 import '../models/track_result.dart';
@@ -1599,56 +1602,46 @@ class _ResultView extends StatelessWidget {
 
           const SizedBox(height: 16),
 
-          if (result.tabSource != null ||
-              result.tabChordContent?.isNotEmpty == true) ...[
-            GestureDetector(
-              onTap: result.tabChordContent?.isNotEmpty == true
-                  ? () => _openFullScreenTabs(context, result)
-                  : null,
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  color: AppColors.surfaceContainerLow,
-                  border: Border.all(
-                    color: AppColors.outlineVariant.withOpacity(0.2),
-                  ),
+          if (result.tabSource != null || result.tabUrl?.isNotEmpty == true) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                color: AppColors.surfaceContainerLow,
+                border: Border.all(
+                  color: AppColors.outlineVariant.withOpacity(0.2),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.library_music_rounded,
-                          color: AppColors.secondary,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.library_music_rounded,
+                        color: AppColors.secondary,
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        'TABS${result.tabSource == null ? '' : ' · ${result.tabSource}'}',
+                        style: GoogleFonts.spaceGrotesk(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.outline,
+                          letterSpacing: 1.0,
                         ),
-                        const SizedBox(width: 10),
-                        Text(
-                          'TABS${result.tabSource == null ? '' : ' · ${result.tabSource}'}',
-                          style: GoogleFonts.spaceGrotesk(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.outline,
-                            letterSpacing: 1.0,
-                          ),
-                        ),
-                        const Spacer(),
-                        if (result.tabChordContent?.isNotEmpty == true)
-                          const Icon(
-                            Icons.open_in_full_rounded,
-                            size: 18,
-                            color: AppColors.onSurfaceVariant,
-                          ),
-                      ],
-                    ),
-                    if (result.tabChordContent?.isNotEmpty == true) ...[
-                      const SizedBox(height: 12),
-                      _ChordSheet(content: result.tabChordContent!),
+                      ),
+                      const Spacer(),
                     ],
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 8),
+                  _TabContentSwitcher(
+                    result: result,
+                    onOpenFullScreen: (browser) =>
+                        _openFullScreenTabs(context, result, browser: browser),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 16),
@@ -1790,7 +1783,11 @@ class _ResultView extends StatelessWidget {
     );
   }
 
-  void _openFullScreenTabs(BuildContext context, TrackResult result) {
+  void _openFullScreenTabs(
+    BuildContext context,
+    TrackResult result, {
+    required bool browser,
+  }) {
     Navigator.of(context).push(
       PageRouteBuilder<void>(
         opaque: true,
@@ -1799,7 +1796,9 @@ class _ResultView extends StatelessWidget {
           return _FullScreenChordSheet(
             title: result.title,
             source: result.tabSource,
-            content: result.tabChordContent!,
+            url: result.tabUrl!,
+            content: result.tabChordContent,
+            browser: browser,
           );
         },
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
@@ -2096,15 +2095,181 @@ class _ChordSheet extends StatelessWidget {
 
 }
 
+class _TabContentSwitcher extends StatefulWidget {
+  final TrackResult result;
+  final ValueChanged<bool> onOpenFullScreen;
+
+  const _TabContentSwitcher({
+    required this.result,
+    required this.onOpenFullScreen,
+  });
+
+  @override
+  State<_TabContentSwitcher> createState() => _TabContentSwitcherState();
+}
+
+class _TabContentSwitcherState extends State<_TabContentSwitcher> {
+  bool _browser = false;
+  Offset? _pointerDownPosition;
+
+  @override
+  void initState() {
+    super.initState();
+    _browser = widget.result.tabChordContent?.isNotEmpty != true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasBrowser = widget.result.tabUrl?.isNotEmpty == true;
+    final hasChords = widget.result.tabChordContent?.isNotEmpty == true;
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(child: _modeButton('CHORDS', false, hasChords)),
+            const SizedBox(width: 8),
+            Expanded(child: _modeButton('WEBSITE', true, hasBrowser)),
+            IconButton(
+              tooltip: 'Maximize current view',
+              onPressed: (_browser ? hasBrowser : hasChords)
+                  ? () => widget.onOpenFullScreen(_browser)
+                  : null,
+              icon: const Icon(Icons.open_in_full_rounded, size: 18),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        _buildTabContent(hasBrowser, hasChords),
+      ],
+    );
+  }
+
+  Widget _buildTabContent(bool hasBrowser, bool hasChords) {
+    final content = SizedBox(
+      height: 420,
+      child: _browser && hasBrowser
+          ? _TabWebView(url: widget.result.tabUrl!)
+          : hasChords
+          ? SingleChildScrollView(
+              child: _ChordSheet(content: widget.result.tabChordContent!),
+            )
+          : const Center(child: Text('No tab view available.')),
+    );
+
+    // A tap can maximize the chord sheet without interfering with its scroll.
+    // The website keeps all taps and drags for normal WebView interaction;
+    // its expand button is the deliberate maximize action.
+    if (_browser) {
+      return Listener(
+        onPointerDown: (event) => _pointerDownPosition = event.position,
+        onPointerUp: (event) {
+          final start = _pointerDownPosition;
+          _pointerDownPosition = null;
+          if (start != null && (event.position - start).distance < 10) {
+            widget.onOpenFullScreen(true);
+          }
+        },
+        onPointerCancel: (_) => _pointerDownPosition = null,
+        child: content,
+      );
+    }
+    return Listener(
+      onPointerDown: (event) => _pointerDownPosition = event.position,
+      onPointerUp: (event) {
+        final start = _pointerDownPosition;
+        _pointerDownPosition = null;
+        if (start != null && (event.position - start).distance < 10) {
+          widget.onOpenFullScreen(false);
+        }
+      },
+      child: content,
+    );
+  }
+
+  Widget _modeButton(String label, bool browser, bool enabled) {
+    final selected = _browser == browser;
+    return OutlinedButton(
+      onPressed: enabled ? () => setState(() => _browser = browser) : null,
+      style: OutlinedButton.styleFrom(
+        backgroundColor: selected
+            ? AppColors.primary.withOpacity(0.15)
+            : Colors.transparent,
+        foregroundColor: selected
+            ? AppColors.primary
+            : AppColors.onSurfaceVariant,
+        side: BorderSide(
+          color: selected
+              ? AppColors.primary.withOpacity(0.5)
+              : AppColors.outlineVariant.withOpacity(0.35),
+        ),
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        visualDensity: VisualDensity.compact,
+      ),
+      child: Text(
+        label,
+        style: GoogleFonts.spaceGrotesk(
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.8,
+        ),
+      ),
+    );
+  }
+}
+
+class _TabWebView extends StatefulWidget {
+  final String url;
+
+  const _TabWebView({required this.url});
+
+  @override
+  State<_TabWebView> createState() => _TabWebViewState();
+}
+
+class _TabWebViewState extends State<_TabWebView> {
+  late final WebViewController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onWebResourceError: (_) {},
+        ),
+      )
+      ..loadRequest(Uri.parse(widget.url));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: WebViewWidget(
+        controller: _controller,
+        gestureRecognizers: {
+          Factory<EagerGestureRecognizer>(() => EagerGestureRecognizer()),
+        },
+      ),
+    );
+  }
+}
+
 class _FullScreenChordSheet extends StatelessWidget {
   final String title;
   final String? source;
-  final String content;
+  final String url;
+  final String? content;
+  final bool browser;
 
   const _FullScreenChordSheet({
     required this.title,
     required this.source,
+    required this.url,
     required this.content,
+    required this.browser,
   });
 
   @override
@@ -2143,10 +2308,12 @@ class _FullScreenChordSheet extends StatelessWidget {
         ],
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(8, 12, 8, 32),
-          child: _ExpandedChordSheet(content: content),
-        ),
+        child: browser || content?.isNotEmpty != true
+            ? _TabWebView(url: url)
+            : SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(8, 12, 8, 32),
+                child: _ExpandedChordSheet(content: content!),
+              ),
       ),
     );
   }

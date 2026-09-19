@@ -76,7 +76,7 @@ class TabFinderService:
                 for tab in tabs
                 if tab
                 and (
-                    tab.get("chord_content")
+                    tab.get("url")
                 )
             ],
         }
@@ -187,7 +187,7 @@ class TabFinderService:
                 "source_id": source_id,
                 "source": source["name"],
                 "language": language,
-                "chord_content": "",
+                "url": "",
             }
 
         candidates = self._result_urls(page, source["domains"], search_url)
@@ -196,7 +196,7 @@ class TabFinderService:
                 "source_id": source_id,
                 "source": source["name"],
                 "language": language,
-                "chord_content": "",
+                "url": "",
             }
 
         # Search pages often put a similarly named song first. Inspect a few
@@ -212,12 +212,13 @@ class TabFinderService:
             score = TabFinderService._match_score(
                 candidate_page, title, artist
             )
-            ranked.append((score, -index, candidate_page))
+            ranked.append((score, -index, candidate_page, url))
 
         if not ranked:
             content = page
+            selected_url = candidates[0]
         else:
-            score, _, content = max(ranked)
+            score, _, content, selected_url = max(ranked)
             # Do not return lyrics from an unverified neighbouring result.
             # Hebrew pages commonly show the artist in Hebrew while catalogue
             # searches send the Latin transliteration (for example, "Omer
@@ -230,11 +231,12 @@ class TabFinderService:
             ):
                 return None
 
-        chords, chord_content, lyrics = self._extract_content(content)
+        _, chord_content, _ = self._extract_content(content)
         return {
             "source_id": source_id,
             "source": source["name"],
             "language": language,
+            "url": selected_url,
             "chord_content": chord_content[:12000],
         }
 
