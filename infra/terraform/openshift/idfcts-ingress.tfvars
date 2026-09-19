@@ -1,0 +1,13 @@
+namespace              = "idfcts-ingress"
+manage_namespace       = false
+kubeconfig_path        = "/home/yoavs/.kube/config"
+kubeconfig_context     = "idfcts-ingress/api-medone-1-med-one:6443/ysitbon"
+api_image              = "registry.med.one/ingress-general/sonic-pulse/api:dev"
+chord_image            = "registry.med.one/ingress-general/sonic-pulse/chord:cache-fix"
+beat_image             = "registry.med.one/ingress-general/sonic-pulse/beat:cache-fix"
+api_replicas           = 1
+chord_replicas         = 1
+beat_replicas          = 1
+deploy_qwen            = false
+deploy_redis           = false
+image_pull_secret_name = "registry-med-one"

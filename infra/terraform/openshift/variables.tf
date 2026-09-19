@@ -3,6 +3,11 @@ variable "namespace" {
   default = "sonic-pulse"
 }
 
+variable "manage_namespace" {
+  type    = bool
+  default = true
+}
+
 variable "kubeconfig_path" {
   type    = string
   default = null
@@ -73,6 +78,16 @@ variable "beat_replicas" {
 variable "qwen_replicas" {
   type    = number
   default = 0
+}
+
+variable "deploy_qwen" {
+  type    = bool
+  default = true
+}
+
+variable "deploy_redis" {
+  type    = bool
+  default = true
 }
 
 variable "api_route_host" {

@@ -78,12 +78,11 @@ def register_blueprints(app: Flask, config) -> None:
     app.register_blueprint(health_bp)
 
     if config.SERVICE_ROLE in ('audio', 'chord', 'beat'):
-        from blueprints.beats import beats_bp
-        from blueprints.chords import chords_bp
-
         if config.SERVICE_ROLE in ('audio', 'beat'):
+            from blueprints.beats import beats_bp
             app.register_blueprint(beats_bp)
         if config.SERVICE_ROLE in ('audio', 'chord'):
+            from blueprints.chords import chords_bp
             app.register_blueprint(chords_bp)
         if config.SERVICE_ROLE == 'audio':
             from blueprints.songformer import songformer_bp

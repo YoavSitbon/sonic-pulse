@@ -1,5 +1,5 @@
 output "namespace" {
-  value = kubernetes_namespace_v1.sonic_pulse.metadata[0].name
+  value = var.namespace
 }
 
 output "api_service" {
@@ -11,5 +11,5 @@ output "api_route_host" {
 }
 
 output "qwen_service" {
-  value = kubernetes_service_v1.qwen.metadata[0].name
+  value = try(kubernetes_service_v1.qwen[0].metadata[0].name, null)
 }

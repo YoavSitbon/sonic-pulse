@@ -31,6 +31,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
+# OpenShift runs containers with a random UID, so the image user's home and
+# the read-only virtualenv are not reliable locations for Numba's JIT cache.
+RUN mkdir -p /tmp/numba-cache && chmod 1777 /tmp/numba-cache
+
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
@@ -64,6 +68,7 @@ RUN mkdir -p /home/app/.cache/spleeter/pretrained_models/2stems \
 ENV FLASK_ENV=production \
     FLASK_DEBUG=False \
     SERVICE_ROLE=chord \
+    NUMBA_CACHE_DIR=/tmp/numba-cache \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 

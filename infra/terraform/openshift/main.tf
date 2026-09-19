@@ -7,6 +7,7 @@ locals {
 }
 
 resource "kubernetes_namespace_v1" "sonic_pulse" {
+  count = var.manage_namespace ? 1 : 0
   metadata {
     name = var.namespace
     labels = {
@@ -19,25 +20,25 @@ resource "kubernetes_namespace_v1" "sonic_pulse" {
 resource "kubernetes_config_map_v1" "runtime" {
   metadata {
     name      = "sonic-pulse-runtime"
-    namespace = kubernetes_namespace_v1.sonic_pulse.metadata[0].name
+    namespace = var.namespace
   }
 
   data = {
-    SERVICE_ROLE           = "api"
-    CHORD_SERVICE_URL      = "http://chord-service:8080"
-    BEAT_SERVICE_URL       = "http://beat-service:8080"
-    MUSIC_AI_BASE_URL      = "http://qwen-inference:8000/v1"
-    MUSIC_AI_MODEL         = var.qwen_served_model
-    AUDIO_SERVICE_TIMEOUT  = "600"
-    MUSIC_AI_TIMEOUT       = "120"
-    REDIS_URL              = "redis://redis:6379/0"
+    SERVICE_ROLE          = "api"
+    CHORD_SERVICE_URL     = "http://chord-service:8080"
+    BEAT_SERVICE_URL      = "http://beat-service:8080"
+    MUSIC_AI_BASE_URL     = var.deploy_qwen ? "http://qwen-inference:8000/v1" : ""
+    MUSIC_AI_MODEL        = var.qwen_served_model
+    AUDIO_SERVICE_TIMEOUT = "600"
+    MUSIC_AI_TIMEOUT      = "120"
+    REDIS_URL             = var.deploy_redis ? "redis://redis:6379/0" : ""
   }
 }
 
 resource "kubernetes_secret_v1" "runtime" {
   metadata {
     name      = "sonic-pulse-secrets"
-    namespace = kubernetes_namespace_v1.sonic_pulse.metadata[0].name
+    namespace = var.namespace
   }
 
   type = "Opaque"
@@ -48,13 +49,14 @@ resource "kubernetes_secret_v1" "runtime" {
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "qwen_models" {
+  count = var.deploy_qwen ? 1 : 0
   metadata {
     name      = "qwen-model-cache"
-    namespace = kubernetes_namespace_v1.sonic_pulse.metadata[0].name
+    namespace = var.namespace
   }
 
   spec {
-    access_modes       = ["ReadWriteOnce"]
+    access_modes = ["ReadWriteOnce"]
     resources {
       requests = {
         storage = var.model_storage_size
@@ -96,6 +98,7 @@ resource "kubernetes_service_v1" "chord" {
 }
 
 resource "kubernetes_service_v1" "qwen" {
+  count = var.deploy_qwen ? 1 : 0
   metadata {
     name      = "qwen-inference"
     namespace = var.namespace
@@ -112,6 +115,7 @@ resource "kubernetes_service_v1" "qwen" {
 }
 
 resource "kubernetes_service_v1" "redis" {
+  count = var.deploy_redis ? 1 : 0
   metadata {
     name      = "redis"
     namespace = var.namespace
@@ -153,7 +157,11 @@ resource "kubernetes_deployment_v1" "api" {
             name           = "http"
             container_port = 8080
           }
-          env_from { config_map_ref { name = kubernetes_config_map_v1.runtime.metadata[0].name } }
+          env_from {
+            config_map_ref {
+              name = kubernetes_config_map_v1.runtime.metadata[0].name
+            }
+          }
           env_from {
             secret_ref {
               name     = kubernetes_secret_v1.runtime.metadata[0].name
@@ -177,7 +185,7 @@ resource "kubernetes_deployment_v1" "api" {
             period_seconds        = 20
           }
           resources {
-            requests = { cpu = "500m", memory = "1Gi" }
+            requests = { cpu = "500m", memory = "3Gi" }
             limits   = { cpu = "2", memory = "3Gi" }
           }
         }
@@ -228,10 +236,23 @@ resource "kubernetes_deployment_v1" "chord" {
             name           = "http"
             container_port = 8080
           }
-          env_from { config_map_ref { name = kubernetes_config_map_v1.runtime.metadata[0].name } }
+          env_from {
+            config_map_ref {
+              name = kubernetes_config_map_v1.runtime.metadata[0].name
+            }
+          }
           env {
             name  = "SERVICE_ROLE"
             value = "chord"
+          }
+          startup_probe {
+            http_get {
+              path = "/health"
+              port = 8080
+            }
+            failure_threshold = 60
+            period_seconds    = 10
+            timeout_seconds   = 5
           }
           readiness_probe {
             http_get {
@@ -242,16 +263,15 @@ resource "kubernetes_deployment_v1" "chord" {
             period_seconds        = 15
           }
           liveness_probe {
-            http_get {
-              path = "/health"
+            tcp_socket {
               port = 8080
             }
             initial_delay_seconds = 120
             period_seconds        = 30
           }
           resources {
-            requests = { cpu = "2", memory = "6Gi" }
-            limits   = { cpu = "6", memory = "12Gi" }
+            requests = { cpu = "1500m", memory = "6Gi" }
+            limits   = { cpu = "6", memory = "6Gi" }
           }
         }
       }
@@ -283,24 +303,42 @@ resource "kubernetes_deployment_v1" "beat" {
             name           = "http"
             container_port = 8080
           }
-          env_from { config_map_ref { name = kubernetes_config_map_v1.runtime.metadata[0].name } }
+          env_from {
+            config_map_ref {
+              name = kubernetes_config_map_v1.runtime.metadata[0].name
+            }
+          }
           env {
             name  = "SERVICE_ROLE"
             value = "beat"
           }
+          startup_probe {
+            http_get {
+              path = "/health"
+              port = 8080
+            }
+            failure_threshold = 60
+            period_seconds    = 10
+            timeout_seconds   = 5
+          }
           readiness_probe {
-            http_get { path = "/health" port = 8080 }
+            http_get {
+              path = "/health"
+              port = 8080
+            }
             initial_delay_seconds = 60
             period_seconds        = 15
           }
           liveness_probe {
-            http_get { path = "/health" port = 8080 }
+            tcp_socket {
+              port = 8080
+            }
             initial_delay_seconds = 120
             period_seconds        = 30
           }
           resources {
-            requests = { cpu = "2", memory = "6Gi" }
-            limits   = { cpu = "6", memory = "12Gi" }
+            requests = { cpu = "1500m", memory = "6Gi" }
+            limits   = { cpu = "6", memory = "6Gi" }
           }
         }
       }
@@ -309,6 +347,7 @@ resource "kubernetes_deployment_v1" "beat" {
 }
 
 resource "kubernetes_deployment_v1" "qwen" {
+  count = var.deploy_qwen ? 1 : 0
   metadata {
     name      = "qwen-inference"
     namespace = var.namespace
@@ -366,7 +405,7 @@ resource "kubernetes_deployment_v1" "qwen" {
         volume {
           name = "model-cache"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim_v1.qwen_models.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim_v1.qwen_models[0].metadata[0].name
           }
         }
       }
@@ -375,6 +414,7 @@ resource "kubernetes_deployment_v1" "qwen" {
 }
 
 resource "kubernetes_deployment_v1" "redis" {
+  count = var.deploy_redis ? 1 : 0
   metadata {
     name      = "redis"
     namespace = var.namespace
@@ -411,6 +451,9 @@ resource "kubernetes_manifest" "api_route" {
     metadata = {
       name      = "api"
       namespace = var.namespace
+      annotations = {
+        "haproxy.router.openshift.io/timeout" = "10m"
+      }
     }
     spec = merge(
       {
