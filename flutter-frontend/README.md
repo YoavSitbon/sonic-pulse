@@ -67,3 +67,12 @@ To connect to a live Python backend:
 3. Update `baseUrl` to your machine's LAN IP (or use `adb reverse tcp:5001 tcp:5001` with `http://127.0.0.1:5001`).
 
 See [.agents/skills/backend-connection-setup/SKILL.md](.agents/skills/backend-connection-setup/SKILL.md) for full instructions and sample FastAPI code.
+
+to run
+connect phone
+on powershell as admin: usbipd attach --wsl --busid 2-2
+in wsl
+adb reverse --remove-all
+adb reverse tcp:5001 tcp:5001
+adb reverse --list
+flutter run

@@ -30,9 +30,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip "setuptools==79.0.1" wheel
 RUN pip install --no-cache-dir Cython>=0.29.0 numpy==1.26.4
 RUN pip install --no-cache-dir git+https://github.com/CPJKU/madmom
-# Install all requirements except Spleeter first, then install Spleeter without deps to avoid resolver conflicts with librosa/httpx
-RUN grep -v '^spleeter==' requirements.txt | grep -v '^typer==' > requirements_nospleeter.txt \
-    && pip install --no-cache-dir -r requirements_nospleeter.txt \
+# Install Spleeter without its stale dependency metadata to avoid resolver conflicts with the modern librosa/httpx pins.
+RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir --no-deps typer==0.9.0 \
     && pip install --no-cache-dir --no-deps spleeter==2.3.2
 

@@ -53,6 +53,10 @@ class AudioRecorderService {
 
   Future<bool> get isRecording => _recorder.isRecording();
 
+  /// Emits the current microphone level in dBFS while recording.
+  Stream<Amplitude> get amplitudeStream =>
+      _recorder.onAmplitudeChanged(const Duration(milliseconds: 100));
+
   /// Cancels the current recording and deletes the temp file.
   Future<void> cancelRecording() async {
     if (await _recorder.isRecording()) {

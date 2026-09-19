@@ -6,9 +6,52 @@ import '../models/track_result.dart';
 
 /// Sends audio files to the Python backend for recognition / analysis.
 ///
-/// While [ApiConfig.useMockResponses] is true, all methods return
-/// fake data after a short delay so the UI can be tested end-to-end.
 class RecognitionService {
+  Future<TrackResult> findTabsFromAudio(
+    String audioFilePath, {
+    Map<String, List<String>> preferences = const {},
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${ApiConfig.baseUrl}${ApiConfig.findTabsEndpoint}'),
+    );
+    request.files.add(await http.MultipartFile.fromPath('file', audioFilePath));
+    request.fields['preferences'] = jsonEncode(preferences);
+    return _sendFindTabs(request);
+  }
+
+  Future<TrackResult> findTabsBySong({
+    required String title,
+    required String artist,
+    Map<String, List<String>> preferences = const {},
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${ApiConfig.baseUrl}${ApiConfig.findTabsEndpoint}'),
+    );
+    request.fields['title'] = title;
+    request.fields['artist'] = artist;
+    request.fields['preferences'] = jsonEncode(preferences);
+    return _sendFindTabs(request);
+  }
+
+  Future<TrackResult> _sendFindTabs(http.MultipartRequest request) async {
+    final streamed = await request.send().timeout(ApiConfig.requestTimeout);
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode != 200) {
+      throw RecognitionException(_serverError(response));
+    }
+    try {
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      if (json['success'] != true) {
+        throw RecognitionException(json['error'] as String? ?? 'No tabs found.');
+      }
+      return TrackResult.fromFindTabsJson(json);
+    } catch (e) {
+      if (e is RecognitionException) rethrow;
+      throw RecognitionException('Failed to parse tab response: $e');
+    }
+  }
   // ── Song fingerprint recognition ─────────────────────────────────
 
   Future<TrackResult> recognizeSong(String audioFilePath) async {
@@ -20,8 +63,11 @@ class RecognitionService {
     final uri = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.recognizeEndpoint}');
     final request = http.MultipartRequest('POST', uri);
     request.files.add(
-      await http.MultipartFile.fromPath('file', audioFilePath,
-          filename: 'recording.wav'),
+      await http.MultipartFile.fromPath(
+        'file',
+        audioFilePath,
+        filename: 'recording.wav',
+      ),
     );
 
     final streamed = await request.send().timeout(ApiConfig.requestTimeout);
@@ -34,8 +80,16 @@ class RecognitionService {
     }
 
     try {
-      return TrackResult.fromJsonString(response.body);
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      if (json['success'] != true) {
+        throw RecognitionException(
+          json['error'] as String? ??
+              'The backend could not recognize the recording.',
+        );
+      }
+      return TrackResult.fromChordRecognitionJson(json);
     } catch (e) {
+      if (e is RecognitionException) rethrow;
       throw RecognitionException('Failed to parse server response: $e');
     }
   }
@@ -92,26 +146,51 @@ class RecognitionService {
       return MockResponses.analyze();
     }
 
+    if (audioFilePath.isEmpty) {
+      throw const RecognitionException(
+        'No recording was created. Please try again.',
+      );
+    }
+
     final uri = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.analyzeEndpoint}');
     final request = http.MultipartRequest('POST', uri);
     request.files.add(
-      await http.MultipartFile.fromPath('audio', audioFilePath,
-          filename: 'recording.wav'),
+      await http.MultipartFile.fromPath(
+        'file',
+        audioFilePath,
+        filename: 'recording.wav',
+      ),
     );
 
     final streamed = await request.send().timeout(ApiConfig.requestTimeout);
     final response = await http.Response.fromStream(streamed);
 
     if (response.statusCode != 200) {
-      throw RecognitionException(
-        'Server error ${response.statusCode}: ${response.body}',
-      );
+      throw RecognitionException(_serverError(response));
     }
 
     try {
-      return TrackResult.fromJsonString(response.body);
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      if (json['success'] != true) {
+        throw RecognitionException(
+          json['error'] as String? ??
+              'The backend could not analyze the recording.',
+        );
+      }
+      return TrackResult.fromChordRecognitionJson(json);
     } catch (e) {
+      if (e is RecognitionException) rethrow;
       throw RecognitionException('Failed to parse server response: $e');
+    }
+  }
+
+  String _serverError(http.Response response) {
+    try {
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      return json['error'] as String? ??
+          'Server error ${response.statusCode}. Please try again.';
+    } catch (_) {
+      return 'Server error ${response.statusCode}. Please try again.';
     }
   }
 

@@ -79,5 +79,21 @@ void main() {
       expect(mock.bpm, greaterThan(0));
       expect(mock.chords.isNotEmpty, true);
     });
+
+    test('maps chord recognition response segments to display chords', () {
+      final result = TrackResult.fromChordRecognitionJson({
+        'success': true,
+        'model_name': 'Chord-CNN-LSTM',
+        'chords': [
+          {'start': 0.0, 'end': 1.0, 'chord': 'C:maj', 'confidence': 0.9},
+          {'start': 1.0, 'end': 2.0, 'chord': 'C:maj', 'confidence': 0.8},
+          {'start': 2.0, 'end': 3.0, 'chord': 'A:min', 'confidence': 1.0},
+        ],
+      });
+
+      expect(result.chords, ['C', 'Am']);
+      expect(result.confidence, closeTo(0.9, 0.001));
+      expect(result.title, 'Recorded analysis');
+    });
   });
 }

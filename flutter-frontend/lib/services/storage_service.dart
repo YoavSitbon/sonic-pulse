@@ -7,6 +7,31 @@ class StorageService {
   static const String _savedKey      = 'saved_tracks';
   static const String _scanCountKey  = 'scan_count';
   static const int    _maxHistory    = 50;
+  static const String _tabPreferencesKey = 'tab_source_preferences';
+
+  Future<Map<String, List<String>>> loadTabPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList(_tabPreferencesKey) ?? [];
+    final result = <String, List<String>>{'en': [], 'he': []};
+    for (final entry in raw) {
+      final parts = entry.split('|');
+      if (parts.length == 2 && result.containsKey(parts[0])) {
+        result[parts[0]]!.add(parts[1]);
+      }
+    }
+    return result;
+  }
+
+  Future<void> saveTabPreferences(Map<String, List<String>> preferences) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = <String>[];
+    preferences.forEach((language, sources) {
+      for (final source in sources) {
+        raw.add('$language|$source');
+      }
+    });
+    await prefs.setStringList(_tabPreferencesKey, raw);
+  }
 
   // ── Identified tracks (recent scan history) ──────────────────────
 
@@ -96,5 +121,6 @@ class StorageService {
     await prefs.remove(_identifiedKey);
     await prefs.remove(_savedKey);
     await prefs.remove(_scanCountKey);
+    await prefs.remove(_tabPreferencesKey);
   }
 }

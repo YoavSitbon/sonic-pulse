@@ -31,8 +31,10 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
   _AnalyzeState _state = _AnalyzeState.idle;
   TrackResult? _result;
   String? _errorMessage;
-  int _recordingSecondsLeft = ApiConfig.recordingSeconds;
+  int _recordingSeconds = 0;
   Timer? _recordingTimer;
+  StreamSubscription? _amplitudeSubscription;
+  double _amplitudeLevel = 0.05;
 
   final _recorder = AudioRecorderService();
   final _recognizer = RecognitionService();
@@ -55,12 +57,14 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
       vsync: this,
       duration: const Duration(seconds: 3),
     )..repeat();
-    _outerScale = Tween<double>(begin: 1.0, end: 1.15).animate(
-      CurvedAnimation(parent: _outerPulse, curve: Curves.easeInOut),
-    );
-    _outerOpacity = Tween<double>(begin: 0.35, end: 0.8).animate(
-      CurvedAnimation(parent: _outerPulse, curve: Curves.easeInOut),
-    );
+    _outerScale = Tween<double>(
+      begin: 1.0,
+      end: 1.15,
+    ).animate(CurvedAnimation(parent: _outerPulse, curve: Curves.easeInOut));
+    _outerOpacity = Tween<double>(
+      begin: 0.35,
+      end: 0.8,
+    ).animate(CurvedAnimation(parent: _outerPulse, curve: Curves.easeInOut));
 
     _innerPulse = AnimationController(
       vsync: this,
@@ -69,12 +73,14 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
     Future.delayed(const Duration(seconds: 1), () {
       if (mounted) _innerPulse.repeat();
     });
-    _innerScale = Tween<double>(begin: 1.0, end: 1.15).animate(
-      CurvedAnimation(parent: _innerPulse, curve: Curves.easeInOut),
-    );
-    _innerOpacity = Tween<double>(begin: 0.35, end: 0.8).animate(
-      CurvedAnimation(parent: _innerPulse, curve: Curves.easeInOut),
-    );
+    _innerScale = Tween<double>(
+      begin: 1.0,
+      end: 1.15,
+    ).animate(CurvedAnimation(parent: _innerPulse, curve: Curves.easeInOut));
+    _innerOpacity = Tween<double>(
+      begin: 0.35,
+      end: 0.8,
+    ).animate(CurvedAnimation(parent: _innerPulse, curve: Curves.easeInOut));
   }
 
   @override
@@ -82,6 +88,7 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
     _outerPulse.dispose();
     _innerPulse.dispose();
     _recordingTimer?.cancel();
+    _amplitudeSubscription?.cancel();
     _recorder.dispose();
     super.dispose();
   }
@@ -89,6 +96,11 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
   // ── Flow ─────────────────────────────────────────────────────────
 
   Future<void> _startAnalysis() async {
+    _recordingTimer?.cancel();
+    _recordingTimer = null;
+    await _amplitudeSubscription?.cancel();
+    _amplitudeSubscription = null;
+
     final hasPermission = await _recorder.requestPermission();
     if (!hasPermission) {
       _showError('Microphone permission denied. Please enable it in Settings.');
@@ -97,7 +109,7 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
 
     setState(() {
       _state = _AnalyzeState.recording;
-      _recordingSecondsLeft = ApiConfig.recordingSeconds;
+      _recordingSeconds = 0;
       _errorMessage = null;
     });
 
@@ -107,18 +119,29 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
       return;
     }
 
+    _amplitudeSubscription = _recorder.amplitudeStream.listen((amplitude) {
+      if (!mounted || _state != _AnalyzeState.recording) return;
+      final db = amplitude.current;
+      final level = db.isFinite && db > -55
+          ? ((db + 55) / 35).clamp(0.0, 1.0).toDouble()
+          : 0.0;
+      setState(() => _amplitudeLevel = level);
+    });
+
     _recordingTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) { t.cancel(); return; }
-      setState(() => _recordingSecondsLeft--);
-      if (_recordingSecondsLeft <= 0) {
+      if (!mounted) {
         t.cancel();
-        _finishAndSend();
+        return;
       }
+      setState(() => _recordingSeconds++);
     });
   }
 
   Future<void> _finishAndSend() async {
     _recordingTimer?.cancel();
+    _recordingTimer = null;
+    await _amplitudeSubscription?.cancel();
+    _amplitudeSubscription = null;
     final audioPath = await _recorder.stopRecording();
 
     setState(() => _state = _AnalyzeState.analyzing);
@@ -150,7 +173,11 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
 
   void _reset() {
     _recordingTimer?.cancel();
+    _recordingTimer = null;
+    _amplitudeSubscription?.cancel();
+    _amplitudeSubscription = null;
     _recorder.cancelRecording();
+    _amplitudeLevel = 0.05;
     setState(() {
       _state = _AnalyzeState.idle;
       _result = null;
@@ -198,11 +225,13 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
       case _AnalyzeState.recording:
         return _RecordingView(
           key: const ValueKey('recording'),
-          secondsLeft: _recordingSecondsLeft,
+          elapsedSeconds: _recordingSeconds,
           outerScale: _outerScale,
           outerOpacity: _outerOpacity,
           innerScale: _innerScale,
           innerOpacity: _innerOpacity,
+          amplitudeLevel: _amplitudeLevel,
+          onStop: _finishAndSend,
           onCancel: _reset,
         );
       case _AnalyzeState.analyzing:
@@ -244,8 +273,11 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
             shape: BoxShape.circle,
             color: AppColors.surfaceContainer,
           ),
-          child: const Icon(Icons.arrow_back_rounded,
-              color: AppColors.onSurfaceVariant, size: 18),
+          child: const Icon(
+            Icons.arrow_back_rounded,
+            color: AppColors.onSurfaceVariant,
+            size: 18,
+          ),
         ),
       ),
       title: Text(
@@ -264,7 +296,8 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
             borderRadius: BorderRadius.circular(999),
             color: AppColors.surfaceContainerHigh,
             border: Border.all(
-                color: AppColors.outlineVariant.withOpacity(0.3)),
+              color: AppColors.outlineVariant.withOpacity(0.3),
+            ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -323,45 +356,67 @@ class _InitialView extends StatelessWidget {
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            padding: const EdgeInsets.only(top: 20),
+            child: Column(
               children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    color: AppColors.primary.withOpacity(0.1),
+                    border: Border.all(
+                      color: AppColors.primary.withOpacity(0.3),
+                    ),
+                  ),
+                  child: Text(
+                    'AI ENGINE READY',
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary,
+                      letterSpacing: 1.4,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
                 Text(
-                  'AI Song Analyzer',
+                  'AI chord analyzer',
                   style: GoogleFonts.sora(
-                    fontSize: 26,
+                    fontSize: 28,
                     fontWeight: FontWeight.w700,
                     color: AppColors.onSurface,
                     letterSpacing: -0.5,
                   ),
+                  textAlign: TextAlign.center,
                 ),
-                const Icon(Icons.auto_awesome_rounded,
-                    color: AppColors.primary, size: 26),
               ],
             ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
             child: Align(
-              alignment: Alignment.centerLeft,
+              alignment: Alignment.center,
               child: Text(
-                'Analyze key, BPM, chords, mood, and more — tap to record ${ApiConfig.recordingSeconds}s of audio.',
+                'Record as long as you need, then stop to identify the chord progression.',
                 style: GoogleFonts.plusJakartaSans(
-                  fontSize: 12,
+                  fontSize: 14,
                   color: AppColors.onSurfaceVariant,
                   height: 1.5,
                 ),
+                textAlign: TextAlign.center,
               ),
             ),
           ),
-          const SizedBox(height: 40),
+          const SizedBox(height: 30),
 
           GestureDetector(
             onTap: onTrigger,
             child: SizedBox(
-              width: 260,
-              height: 260,
+              width: 280,
+              height: 280,
               child: Stack(
                 alignment: Alignment.center,
                 children: [
@@ -370,14 +425,18 @@ class _InitialView extends StatelessWidget {
                     builder: (_, __) => Transform.scale(
                       scale: outerScale.value,
                       child: Container(
-                        width: 260,
-                        height: 260,
+                        width: 280,
+                        height: 280,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: AppColors.primary
-                                .withOpacity(outerOpacity.value * 0.35),
+                            color: AppColors.secondary.withOpacity(
+                              outerOpacity.value,
+                            ),
                             width: 1,
+                          ),
+                          color: AppColors.secondary.withOpacity(
+                            outerOpacity.value * 0.15,
                           ),
                         ),
                       ),
@@ -388,76 +447,79 @@ class _InitialView extends StatelessWidget {
                     builder: (_, __) => Transform.scale(
                       scale: innerScale.value,
                       child: Container(
-                        width: 290,
-                        height: 290,
+                        width: 210,
+                        height: 210,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: AppColors.secondary
-                                .withOpacity(innerOpacity.value * 0.2),
+                            color: AppColors.primary.withOpacity(
+                              innerOpacity.value * 0.6,
+                            ),
                             width: 1,
+                          ),
+                          color: AppColors.primary.withOpacity(
+                            innerOpacity.value * 0.12,
                           ),
                         ),
                       ),
                     ),
                   ),
-                  Container(
-                    width: 176,
-                    height: 176,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        colors: [
-                          AppColors.primaryContainer.withOpacity(0.2),
-                          AppColors.secondaryContainer.withOpacity(0.2),
-                          Colors.transparent,
-                        ],
-                      ),
+                  CustomPaint(
+                    size: const Size(150, 150),
+                    painter: _AiDashedCirclePainter(
+                      color: AppColors.outlineVariant.withOpacity(0.5),
                     ),
                   ),
                   Container(
-                    width: 144,
-                    height: 144,
+                    width: 160,
+                    height: 160,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: AppColors.surfaceContainerHigh,
+                      gradient: const RadialGradient(
+                        colors: [
+                          AppColors.surfaceContainerHigh,
+                          AppColors.surfaceContainer,
+                          AppColors.surfaceVariant,
+                        ],
+                      ),
                       border: Border.all(
-                        color: AppColors.primaryFixedDim.withOpacity(0.4),
+                        color: AppColors.secondary.withOpacity(0.8),
                         width: 2,
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.primary.withOpacity(0.3),
-                          blurRadius: 32,
+                          color: AppColors.secondary.withOpacity(0.45),
+                          blurRadius: 45,
                         ),
                         BoxShadow(
-                          color: AppColors.secondary.withOpacity(0.4),
-                          blurRadius: 16,
+                          color: AppColors.primary.withOpacity(0.6),
+                          blurRadius: 15,
                         ),
                       ],
                     ),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Container(
-                          width: 56,
-                          height: 56,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: AppColors.primary.withOpacity(0.2),
-                          ),
-                          child: const Icon(Icons.mic_rounded,
-                              color: AppColors.secondary, size: 30),
+                        const Icon(
+                          Icons.mic_rounded,
+                          color: AppColors.secondary,
+                          size: 44,
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'LISTEN AI',
-                          style: GoogleFonts.spaceGrotesk(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.onSurface,
-                            letterSpacing: 1.5,
-                          ),
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [8, 14, 10, 13].map((height) {
+                            return Container(
+                              width: 3,
+                              height: height.toDouble(),
+                              margin: const EdgeInsets.only(right: 3),
+                              decoration: BoxDecoration(
+                                color: AppColors.secondary,
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                            );
+                          }).toList(),
                         ),
                       ],
                     ),
@@ -467,58 +529,7 @@ class _InitialView extends StatelessWidget {
             ),
           ),
 
-          const SizedBox(height: 32),
-          const FrequencyBars(barCount: 8, height: 38),
-          const SizedBox(height: 20),
-
-          Text(
-            'Deep AI Analysis',
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
-              color: AppColors.onSurface,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Tap sphere to record ${ApiConfig.recordingSeconds}s of audio for analysis',
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 12,
-              color: AppColors.outline,
-            ),
-          ),
-          const SizedBox(height: 28),
-
-          GestureDetector(
-            onTap: onTrigger,
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(999),
-                color: AppColors.surfaceContainer,
-                border: Border.all(
-                    color: AppColors.outlineVariant.withOpacity(0.3)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.play_circle_outlined,
-                      color: AppColors.secondary, size: 18),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Tap to start AI analysis',
-                    style: GoogleFonts.spaceGrotesk(
-                      fontSize: 12,
-                      color: AppColors.onSurfaceVariant,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 100),
+          const SizedBox(height: 48),
         ],
       ),
     );
@@ -529,59 +540,184 @@ class _InitialView extends StatelessWidget {
 // Recording view
 // ─────────────────────────────────────────────────────────────
 
+class _AiDashedCirclePainter extends CustomPainter {
+  final Color color;
+
+  _AiDashedCirclePainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke;
+    const dashCount = 24;
+    final sweep = 2 * 3.14159 / dashCount;
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+
+    for (var i = 0; i < dashCount; i++) {
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius),
+        i * sweep,
+        sweep * 0.5,
+        false,
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_AiDashedCirclePainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
+class _LiveAmplitudeWaves extends StatelessWidget {
+  final List<double> levels;
+
+  const _LiveAmplitudeWaves({required this.levels});
+
+  @override
+  Widget build(BuildContext context) {
+    final left = levels.take(6).toList();
+    final right = levels.skip(6).take(6).toList();
+    return SizedBox(
+      width: 304,
+      height: 120,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _WaveGroup(levels: left),
+          _WaveGroup(levels: right.reversed.toList()),
+        ],
+      ),
+    );
+  }
+}
+
+class _WaveGroup extends StatelessWidget {
+  final List<double> levels;
+
+  const _WaveGroup({required this.levels});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: levels.map((level) {
+        return Container(
+          width: 3,
+          height: 12 + (level * 38),
+          margin: const EdgeInsets.symmetric(horizontal: 2),
+          decoration: BoxDecoration(
+            color: AppColors.secondary.withOpacity(0.8),
+            borderRadius: BorderRadius.circular(4),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
 class _RecordingView extends StatelessWidget {
-  final int secondsLeft;
+  final int elapsedSeconds;
   final Animation<double> outerScale;
   final Animation<double> outerOpacity;
   final Animation<double> innerScale;
   final Animation<double> innerOpacity;
+  final double amplitudeLevel;
+  final VoidCallback onStop;
   final VoidCallback onCancel;
 
   const _RecordingView({
     super.key,
-    required this.secondsLeft,
+    required this.elapsedSeconds,
     required this.outerScale,
     required this.outerOpacity,
     required this.innerScale,
     required this.innerOpacity,
+    required this.amplitudeLevel,
+    required this.onStop,
     required this.onCancel,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: SizedBox(
+        width: double.infinity,
+        child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              color: Colors.redAccent.withOpacity(0.1),
+              border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+            ),
+            child: Text(
+              'RECORDING NOW',
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: Colors.redAccent,
+                letterSpacing: 1.4,
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Listening…',
+            style: GoogleFonts.sora(
+              fontSize: 28,
+              fontWeight: FontWeight.w700,
+              color: AppColors.onSurface,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Stop when you have captured enough audio',
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 14,
+              color: AppColors.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 36),
           SizedBox(
-            width: 200,
-            height: 200,
+            width: 280,
+            height: 280,
             child: Stack(
               alignment: Alignment.center,
               children: [
-                AnimatedBuilder(
-                  animation: outerScale,
-                  builder: (_, __) => Transform.scale(
-                    scale: outerScale.value,
+                TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0.82, end: 0.82 + amplitudeLevel * 0.38),
+                  duration: const Duration(milliseconds: 120),
+                  curve: Curves.easeOut,
+                  builder: (_, scale, __) => Transform.scale(
+                    scale: scale,
                     child: Container(
-                      width: 200,
-                      height: 200,
+                      width: 280,
+                      height: 280,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: Colors.redAccent
-                              .withOpacity(outerOpacity.value * 0.6),
-                          width: 1.5,
+                          color: Colors.redAccent.withOpacity(0.85),
+                          width: 2,
                         ),
-                        color: Colors.redAccent
-                            .withOpacity(outerOpacity.value * 0.08),
+                        color: Colors.redAccent.withOpacity(0.06),
                       ),
                     ),
                   ),
                 ),
                 Container(
-                  width: 130,
-                  height: 130,
+                  width: 160,
+                  height: 160,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: AppColors.surfaceContainerHigh,
@@ -599,15 +735,27 @@ class _RecordingView extends StatelessWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.mic_rounded,
-                          color: Colors.redAccent, size: 36),
+                      const Icon(
+                        Icons.mic_rounded,
+                        color: Colors.redAccent,
+                        size: 40,
+                      ),
                       const SizedBox(height: 4),
                       Text(
-                        '$secondsLeft',
+                        '$elapsedSeconds',
                         style: GoogleFonts.sora(
-                          fontSize: 30,
+                          fontSize: 28,
                           fontWeight: FontWeight.w700,
                           color: Colors.redAccent,
+                        ),
+                      ),
+                      Text(
+                        'SEC',
+                        style: GoogleFonts.spaceGrotesk(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.onSurfaceVariant,
+                          letterSpacing: 1.5,
                         ),
                       ),
                     ],
@@ -616,9 +764,9 @@ class _RecordingView extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 28),
           Text(
-            'RECORDING FOR AI',
+            'RECORDING AUDIO',
             style: GoogleFonts.spaceGrotesk(
               fontSize: 13,
               fontWeight: FontWeight.w700,
@@ -633,31 +781,45 @@ class _RecordingView extends StatelessWidget {
               fontSize: 13,
               color: AppColors.onSurfaceVariant,
             ),
+            textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 20),
           GestureDetector(
-            onTap: onCancel,
+            onTap: onStop,
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 14),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(999),
-                color: AppColors.surfaceContainerHigh,
-                border: Border.all(
-                    color: AppColors.outlineVariant.withOpacity(0.4)),
+                color: Colors.redAccent.withOpacity(0.15),
+                border: Border.all(color: Colors.redAccent.withOpacity(0.55)),
               ),
               child: Text(
-                'CANCEL',
+                'STOP & ANALYZE',
                 style: GoogleFonts.spaceGrotesk(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.onSurfaceVariant,
+                  color: Colors.redAccent,
                   letterSpacing: 1.0,
                 ),
               ),
             ),
           ),
-        ],
+          const SizedBox(height: 10),
+          TextButton(
+            onPressed: onCancel,
+            child: Text(
+              'CANCEL',
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: AppColors.onSurfaceVariant,
+                letterSpacing: 1.0,
+              ),
+            ),
+          ),
+          const SizedBox(height: 80),
+          ],
+        ),
       ),
     );
   }
@@ -696,7 +858,7 @@ class _AnalyzingView extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Detecting key, BPM, chords, mood…',
+            'Detecting chords in your recording…',
             style: GoogleFonts.plusJakartaSans(
               fontSize: 13,
               color: AppColors.onSurfaceVariant,
@@ -734,8 +896,11 @@ class _ErrorView extends StatelessWidget {
                 color: Colors.redAccent.withOpacity(0.1),
                 border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
               ),
-              child: const Icon(Icons.error_outline_rounded,
-                  color: Colors.redAccent, size: 36),
+              child: const Icon(
+                Icons.error_outline_rounded,
+                color: Colors.redAccent,
+                size: 36,
+              ),
             ),
             const SizedBox(height: 20),
             Text(
@@ -761,12 +926,15 @@ class _ErrorView extends StatelessWidget {
               onTap: onRetry,
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 28, vertical: 14),
+                  horizontal: 28,
+                  vertical: 14,
+                ),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(999),
                   color: AppColors.surfaceContainerHigh,
                   border: Border.all(
-                      color: AppColors.outlineVariant.withOpacity(0.4)),
+                    color: AppColors.outlineVariant.withOpacity(0.4),
+                  ),
                 ),
                 child: Text(
                   'TRY AGAIN',
@@ -818,7 +986,8 @@ class _ResultsView extends StatelessWidget {
               borderRadius: BorderRadius.circular(16),
               color: AppColors.surfaceContainer.withOpacity(0.8),
               border: Border.all(
-                  color: AppColors.outlineVariant.withOpacity(0.3)),
+                color: AppColors.outlineVariant.withOpacity(0.3),
+              ),
             ),
             child: Row(
               children: [
@@ -829,10 +998,14 @@ class _ResultsView extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                     color: AppColors.surfaceContainerHighest,
                     border: Border.all(
-                        color: AppColors.outlineVariant.withOpacity(0.3)),
+                      color: AppColors.outlineVariant.withOpacity(0.3),
+                    ),
                   ),
-                  child: const Icon(Icons.album_rounded,
-                      color: AppColors.primary, size: 28),
+                  child: const Icon(
+                    Icons.album_rounded,
+                    color: AppColors.primary,
+                    size: 28,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -852,13 +1025,15 @@ class _ResultsView extends StatelessWidget {
                           const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(6),
                               color: AppColors.secondary.withOpacity(0.1),
                               border: Border.all(
-                                  color:
-                                      AppColors.secondary.withOpacity(0.3)),
+                                color: AppColors.secondary.withOpacity(0.3),
+                              ),
                             ),
                             child: Text(
                               result.confidencePercent,
@@ -905,8 +1080,9 @@ class _ResultsView extends StatelessWidget {
                       saved
                           ? Icons.bookmark_rounded
                           : Icons.bookmark_outline_rounded,
-                      color:
-                          saved ? AppColors.primary : AppColors.onSurfaceVariant,
+                      color: saved
+                          ? AppColors.primary
+                          : AppColors.onSurfaceVariant,
                       size: 18,
                     ),
                   ),
@@ -946,13 +1122,17 @@ class _ResultsView extends StatelessWidget {
                       borderRadius: BorderRadius.circular(999),
                       color: AppColors.surfaceContainer,
                       border: Border.all(
-                          color: AppColors.outlineVariant.withOpacity(0.4)),
+                        color: AppColors.outlineVariant.withOpacity(0.4),
+                      ),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.refresh_rounded,
-                            color: AppColors.onSurface, size: 16),
+                        const Icon(
+                          Icons.refresh_rounded,
+                          color: AppColors.onSurface,
+                          size: 16,
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           'ANALYZE NEW',
@@ -982,7 +1162,8 @@ class _ResultsView extends StatelessWidget {
                           : AppColors.primaryContainer,
                       border: saved
                           ? Border.all(
-                              color: AppColors.primary.withOpacity(0.3))
+                              color: AppColors.primary.withOpacity(0.3),
+                            )
                           : null,
                       boxShadow: saved
                           ? null
@@ -1060,8 +1241,11 @@ class _HarmonicCard extends StatelessWidget {
                   letterSpacing: 1.0,
                 ),
               ),
-              const Icon(Icons.music_note_rounded,
-                  color: AppColors.primary, size: 14),
+              const Icon(
+                Icons.music_note_rounded,
+                color: AppColors.primary,
+                size: 14,
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -1098,7 +1282,8 @@ class _HarmonicCard extends StatelessWidget {
             decoration: BoxDecoration(
               border: Border(
                 top: BorderSide(
-                    color: AppColors.outlineVariant.withOpacity(0.2)),
+                  color: AppColors.outlineVariant.withOpacity(0.2),
+                ),
               ),
             ),
             child: Row(
@@ -1156,8 +1341,11 @@ class _RhythmCard extends StatelessWidget {
                   letterSpacing: 1.0,
                 ),
               ),
-              const Icon(Icons.speed_rounded,
-                  color: AppColors.secondary, size: 14),
+              const Icon(
+                Icons.speed_rounded,
+                color: AppColors.secondary,
+                size: 14,
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -1165,7 +1353,7 @@ class _RhythmCard extends StatelessWidget {
             text: TextSpan(
               children: [
                 TextSpan(
-                  text: '${result.bpm} ',
+                  text: result.bpm > 0 ? '${result.bpm} ' : '— ',
                   style: GoogleFonts.sora(
                     fontSize: 22,
                     fontWeight: FontWeight.w700,
@@ -1207,7 +1395,8 @@ class _RhythmCard extends StatelessWidget {
             decoration: BoxDecoration(
               border: Border(
                 top: BorderSide(
-                    color: AppColors.outlineVariant.withOpacity(0.2)),
+                  color: AppColors.outlineVariant.withOpacity(0.2),
+                ),
               ),
             ),
             child: Row(
@@ -1268,15 +1457,22 @@ class _ChordProgressionCard extends StatelessWidget {
                   letterSpacing: 1.0,
                 ),
               ),
-              const Icon(Icons.piano_rounded,
-                  color: AppColors.tertiary, size: 14),
+              const Icon(
+                Icons.piano_rounded,
+                color: AppColors.tertiary,
+                size: 14,
+              ),
             ],
           ),
           const SizedBox(height: 12),
           if (result.chords.isEmpty)
-            Text('No chords detected',
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 13, color: AppColors.onSurfaceVariant))
+            Text(
+              'No chords detected',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 13,
+                color: AppColors.onSurfaceVariant,
+              ),
+            )
           else
             Row(
               children: result.chords.map((chord) {
@@ -1291,7 +1487,8 @@ class _ChordProgressionCard extends StatelessWidget {
                 return Expanded(
                   child: Container(
                     margin: EdgeInsets.only(
-                        right: idx < result.chords.length - 1 ? 8 : 0),
+                      right: idx < result.chords.length - 1 ? 8 : 0,
+                    ),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(10),
@@ -1345,15 +1542,22 @@ class _MoodTagsCard extends StatelessWidget {
                   letterSpacing: 1.0,
                 ),
               ),
-              const Icon(Icons.auto_awesome_rounded,
-                  color: AppColors.secondary, size: 14),
+              const Icon(
+                Icons.auto_awesome_rounded,
+                color: AppColors.secondary,
+                size: 14,
+              ),
             ],
           ),
           const SizedBox(height: 12),
           if (result.mood.isEmpty)
-            Text('No mood tags detected',
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 13, color: AppColors.onSurfaceVariant))
+            Text(
+              'No mood tags detected',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 13,
+                color: AppColors.onSurfaceVariant,
+              ),
+            )
           else
             Wrap(
               spacing: 8,
@@ -1361,12 +1565,15 @@ class _MoodTagsCard extends StatelessWidget {
               children: result.mood.map((tag) {
                 return Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 6),
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(999),
                     color: AppColors.secondaryContainer.withOpacity(0.15),
                     border: Border.all(
-                        color: AppColors.secondary.withOpacity(0.3)),
+                      color: AppColors.secondary.withOpacity(0.3),
+                    ),
                   ),
                   child: Text(
                     tag,

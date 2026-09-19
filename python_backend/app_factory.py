@@ -81,6 +81,7 @@ def register_blueprints(app: Flask, config) -> None:
     from blueprints.lyrics import lyrics_bp
     from blueprints.songformer import songformer_bp
     from blueprints.debug import debug_bp
+    from blueprints.tabs import tabs_bp
 
     # Register blueprints
     app.register_blueprint(health_bp)
@@ -89,6 +90,7 @@ def register_blueprints(app: Flask, config) -> None:
     app.register_blueprint(chords_bp)
     app.register_blueprint(lyrics_bp)
     app.register_blueprint(songformer_bp)
+    app.register_blueprint(tabs_bp)
 
     # Register debug blueprint only in non-production mode
     if not config.PRODUCTION_MODE:

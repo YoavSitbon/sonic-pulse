@@ -9,6 +9,7 @@ import '../providers/app_state.dart';
 import 'find_song_screen.dart';
 import 'ai_analyzer_screen.dart';
 import 'library_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -107,10 +108,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     shape: BoxShape.circle,
                     color: AppColors.surfaceContainer.withOpacity(0.6),
                   ),
-                  child: const Icon(
-                    Icons.settings_rounded,
-                    color: AppColors.onSurfaceVariant,
-                    size: 20,
+                  child: GestureDetector(
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const SettingsScreen(),
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.settings_rounded,
+                      color: AppColors.onSurfaceVariant,
+                      size: 20,
+                    ),
                   ),
                 ),
               ),

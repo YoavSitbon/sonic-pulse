@@ -5,7 +5,8 @@ void main() {
   group('ApiConfig Tests', () {
     test('endpoints are defined with expected paths', () {
       expect(ApiConfig.recognizeEndpoint, '/api/recognize-chords');
-      expect(ApiConfig.analyzeEndpoint, '/api/analyze');
+      expect(ApiConfig.analyzeEndpoint, '/api/recognize-chords');
+      expect(ApiConfig.findTabsEndpoint, '/api/find-existing-chords');
     });
 
     test('mock response mode is configured as boolean', () {

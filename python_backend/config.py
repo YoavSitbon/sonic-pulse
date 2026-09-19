@@ -33,6 +33,10 @@ class Config:
     CORS_ORIGINS = [
         "http://localhost:3000",  # Development
         "http://127.0.0.1:3000",  # Development
+        "http://localhost:8080",  # Flutter web development
+        "http://127.0.0.1:8080",  # Flutter web development
+        "http://localhost:8081",  # Flutter web development
+        "http://127.0.0.1:8081",  # Flutter web development
         "http://chordmini-frontend:3000",  # Docker container (internal network)
         "http://0.0.0.0:3000",  # Docker bind address
         "https://*.vercel.app",   # Vercel deployments
