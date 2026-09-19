@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -41,6 +42,21 @@ class AudioRecorderService {
       path: _currentPath!,
     );
     return true;
+  }
+
+  /// Starts a raw PCM stream for the WebSocket recognition endpoint.
+  Future<Stream<Uint8List>> startStream() async {
+    if (!await requestPermission()) {
+      throw StateError('Microphone permission denied.');
+    }
+    return _recorder.startStream(
+      const RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: 44100,
+        numChannels: 1,
+        bitRate: 128000,
+      ),
+    );
   }
 
   /// Stops recording and returns the path to the WAV file.

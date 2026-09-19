@@ -4,10 +4,21 @@ import '../models/track_result.dart';
 /// Handles all on-device persistence via SharedPreferences.
 class StorageService {
   static const String _identifiedKey = 'identified_tracks';
-  static const String _savedKey      = 'saved_tracks';
-  static const String _scanCountKey  = 'scan_count';
-  static const int    _maxHistory    = 50;
+  static const String _savedKey = 'saved_tracks';
+  static const String _scanCountKey = 'scan_count';
+  static const int _maxHistory = 50;
   static const String _tabPreferencesKey = 'tab_source_preferences';
+  static const String _autoShazamKey = 'auto_shazam_enabled';
+
+  Future<bool> loadAutoShazam() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_autoShazamKey) ?? false;
+  }
+
+  Future<void> saveAutoShazam(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoShazamKey, enabled);
+  }
 
   Future<Map<String, List<String>>> loadTabPreferences() async {
     final prefs = await SharedPreferences.getInstance();
@@ -38,13 +49,16 @@ class StorageService {
   Future<List<TrackResult>> loadIdentifiedTracks() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList(_identifiedKey) ?? [];
-    return raw.map((s) {
-      try {
-        return TrackResult.fromJsonString(s);
-      } catch (_) {
-        return null;
-      }
-    }).whereType<TrackResult>().toList();
+    return raw
+        .map((s) {
+          try {
+            return TrackResult.fromJsonString(s);
+          } catch (_) {
+            return null;
+          }
+        })
+        .whereType<TrackResult>()
+        .toList();
   }
 
   Future<void> addIdentifiedTrack(TrackResult track) async {
@@ -61,29 +75,30 @@ class StorageService {
   Future<List<TrackResult>> loadSavedTracks() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList(_savedKey) ?? [];
-    return raw.map((s) {
-      try {
-        return TrackResult.fromJsonString(s);
-      } catch (_) {
-        return null;
-      }
-    }).whereType<TrackResult>().toList();
+    return raw
+        .map((s) {
+          try {
+            return TrackResult.fromJsonString(s);
+          } catch (_) {
+            return null;
+          }
+        })
+        .whereType<TrackResult>()
+        .toList();
   }
 
   Future<void> saveTrack(TrackResult track) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList(_savedKey) ?? [];
     // deduplicate by title+artist
-    final deduped = raw
-        .where((s) {
-          try {
-            final t = TrackResult.fromJsonString(s);
-            return !(t.title == track.title && t.artist == track.artist);
-          } catch (_) {
-            return true;
-          }
-        })
-        .toList();
+    final deduped = raw.where((s) {
+      try {
+        final t = TrackResult.fromJsonString(s);
+        return !(t.title == track.title && t.artist == track.artist);
+      } catch (_) {
+        return true;
+      }
+    }).toList();
     deduped.insert(0, track.copyWith(isSaved: true).toJsonString());
     await prefs.setStringList(_savedKey, deduped);
   }
@@ -122,5 +137,6 @@ class StorageService {
     await prefs.remove(_savedKey);
     await prefs.remove(_scanCountKey);
     await prefs.remove(_tabPreferencesKey);
+    await prefs.remove(_autoShazamKey);
   }
 }

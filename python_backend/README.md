@@ -64,6 +64,12 @@ The API implements production-grade rate limiting to ensure fair usage and syste
 ### Moderate Processing Endpoints (10 requests per minute)
 - `POST /api/genius-lyrics` - Genius.com lyrics fetching
 - `POST /api/lrclib-lyrics` - LRClib synchronized lyrics fetching
+- `POST /api/song-ai/chat` - Context-aware music theory conversation
+
+The music chat endpoint uses a local OpenAI-compatible Qwen service. The
+default is Ollama at `http://127.0.0.1:11434/v1` with `qwen3:8b`. Configure
+`MUSIC_AI_BASE_URL`, `MUSIC_AI_MODEL`, and optionally `MUSIC_AI_API_KEY` for a
+different local server such as vLLM or llama.cpp.
 - `POST /api/search-youtube` - YouTube video search
 - `GET /api/search-piped` - Piped API video search
 

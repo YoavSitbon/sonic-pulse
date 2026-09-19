@@ -14,6 +14,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _storage = StorageService();
   Map<String, List<String>> _selected = {'en': [], 'he': []};
   bool _loaded = false;
+  bool _autoShazam = false;
 
   static const _sources = {
     'en': [('ultimate_guitar', 'Ultimate Guitar')],
@@ -28,14 +29,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _load() async {
     final saved = await _storage.loadTabPreferences();
+    final autoShazam = await _storage.loadAutoShazam();
     if (!mounted) return;
     setState(() {
       _selected = {
         'en': saved['en']!.isEmpty ? ['ultimate_guitar'] : saved['en']!,
         'he': saved['he']!.isEmpty ? ['tab4u'] : saved['he']!,
       };
+      _autoShazam = autoShazam;
       _loaded = true;
     });
+  }
+
+  Future<void> _toggleAutoShazam(bool value) async {
+    setState(() => _autoShazam = value);
+    await _storage.saveAutoShazam(value);
   }
 
   Future<void> _toggle(String language, String source, bool value) async {
@@ -64,6 +72,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
           : ListView(
               padding: const EdgeInsets.all(20),
               children: [
+                Text(
+                  'IDENTIFICATION',
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile(
+                  value: _autoShazam,
+                  onChanged: _toggleAutoShazam,
+                  title: const Text('Auto Shazam'),
+                  subtitle: const Text(
+                    'Start listening automatically when you open Find Song.',
+                  ),
+                  activeColor: AppColors.secondary,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                const SizedBox(height: 24),
                 Text(
                   'TAB SOURCES',
                   style: GoogleFonts.spaceGrotesk(
@@ -97,15 +126,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       const SizedBox(height: 8),
                       ...entry.value.map((source) {
-                        final selected =
-                            _selected[entry.key]!.contains(source.$1);
+                        final selected = _selected[entry.key]!.contains(
+                          source.$1,
+                        );
                         return CheckboxListTile(
                           value: selected,
-                          onChanged: (value) => _toggle(
-                            entry.key,
-                            source.$1,
-                            value ?? false,
-                          ),
+                          onChanged: (value) =>
+                              _toggle(entry.key, source.$1, value ?? false),
                           title: Text(source.$2),
                           activeColor: AppColors.primary,
                           contentPadding: EdgeInsets.zero,

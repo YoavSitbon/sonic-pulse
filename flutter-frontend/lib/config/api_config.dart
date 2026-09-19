@@ -28,13 +28,20 @@ class ApiConfig {
   /// Receives a user-selected catalogue song as JSON: `{title, artist}`.
   static const String selectedSongEndpoint = '/api/analyze-song';
   static const String findTabsEndpoint = '/api/find-existing-chords';
+  static const String streamFindTabsEndpoint = '/ws/find-existing-song';
   static const String tabSourcesEndpoint = '/api/tab-sources';
+  static const String songAiEndpoint = '/api/song-ai/chat';
 
   // ── Timeouts ─────────────────────────────────────────────────────
   // Model inference can take longer than a normal API request.
   static const Duration requestTimeout = Duration(minutes: 5);
 
   // ── Recording ────────────────────────────────────────────────────
-  /// Seconds of audio to capture before sending to backend.
-  static const int recordingSeconds = 10;
+  /// Audio is sent in short windows while the user keeps listening.
+  static const int recognitionChunkSeconds = 5;
+
+  /// Kept for compatibility with older callers; recognition no longer stops
+  /// after this many seconds.
+  @Deprecated('Use recognitionChunkSeconds for individual audio windows.')
+  static const int recordingSeconds = recognitionChunkSeconds;
 }

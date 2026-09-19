@@ -1,23 +1,65 @@
 import 'dart:io';
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/web_socket_channel.dart';
 import '../config/api_config.dart';
 import '../models/track_result.dart';
 
 /// Sends audio files to the Python backend for recognition / analysis.
 ///
 class RecognitionService {
-  Future<TrackResult> findTabsFromAudio(
-    String audioFilePath, {
+  Future<TrackResult> findTabsFromStream(
+    Stream<Uint8List> audioStream, {
     Map<String, List<String>> preferences = const {},
+    Future<void>? cancelSignal,
   }) async {
-    final request = http.MultipartRequest(
-      'POST',
-      Uri.parse('${ApiConfig.baseUrl}${ApiConfig.findTabsEndpoint}'),
+    final httpUri = Uri.parse(
+      '${ApiConfig.baseUrl}${ApiConfig.streamFindTabsEndpoint}',
     );
-    request.files.add(await http.MultipartFile.fromPath('file', audioFilePath));
-    request.fields['preferences'] = jsonEncode(preferences);
-    return _sendFindTabs(request);
+    final uri = httpUri.replace(
+      scheme: httpUri.scheme == 'https' ? 'wss' : 'ws',
+    );
+    final channel = WebSocketChannel.connect(uri);
+    StreamSubscription<Uint8List>? audioSubscription;
+
+    try {
+      await channel.ready;
+      channel.sink.add(
+        jsonEncode({'type': 'start', 'preferences': preferences}),
+      );
+      audioSubscription = audioStream.listen(channel.sink.add);
+
+      Future<TrackResult> readMessages() async {
+        await for (final message in channel.stream) {
+          if (message is! String) continue;
+          final payload = jsonDecode(message) as Map<String, dynamic>;
+          if (payload['type'] == 'progress') continue;
+          if (payload['type'] == 'error' || payload['success'] != true) {
+            throw RecognitionException(
+              payload['error'] as String? ?? 'Streaming recognition failed.',
+            );
+          }
+          return TrackResult.fromFindTabsJson(payload);
+        }
+        throw RecognitionException('The recognition stream closed early.');
+      }
+
+      if (cancelSignal == null) return await readMessages();
+      return await Future.any<TrackResult>([
+        readMessages(),
+        cancelSignal.then<TrackResult>(
+          (_) => throw RecognitionException('Recognition cancelled.'),
+        ),
+      ]);
+    } catch (error) {
+      if (error is RecognitionException) rethrow;
+      throw RecognitionException('Streaming recognition unavailable: $error');
+    } finally {
+      await audioSubscription?.cancel();
+      await channel.sink.close();
+    }
   }
 
   Future<TrackResult> findTabsBySong({
@@ -44,7 +86,9 @@ class RecognitionService {
     try {
       final json = jsonDecode(response.body) as Map<String, dynamic>;
       if (json['success'] != true) {
-        throw RecognitionException(json['error'] as String? ?? 'No tabs found.');
+        throw RecognitionException(
+          json['error'] as String? ?? 'No tabs found.',
+        );
       }
       return TrackResult.fromFindTabsJson(json);
     } catch (e) {

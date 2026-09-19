@@ -32,6 +32,7 @@ class TrackResult {
   final String? artworkUrl;
   final String? audioUrl;
   final String? tabSource;
+  final String? tabSourceId;
   final String? tabUrl;
   final String? tabChordContent;
   final String? tabLyrics;
@@ -53,6 +54,7 @@ class TrackResult {
     this.artworkUrl,
     this.audioUrl,
     this.tabSource,
+    this.tabSourceId,
     this.tabUrl,
     this.tabChordContent,
     this.tabLyrics,
@@ -80,6 +82,7 @@ class TrackResult {
       artworkUrl: json['artwork_url'] as String?,
       audioUrl: json['audio_url'] as String?,
       tabSource: json['tab_source'] as String?,
+      tabSourceId: json['tab_source_id'] as String?,
       tabUrl: json['tab_url'] as String?,
       tabChordContent: json['tab_chord_content'] as String?,
       tabLyrics: json['tab_lyrics'] as String?,
@@ -152,6 +155,7 @@ class TrackResult {
       artworkUrl: json['artwork_url'] as String?,
       audioUrl: json['audio_url'] as String?,
       tabSource: selected['source'] as String?,
+      tabSourceId: selected['source_id'] as String?,
       tabUrl: selected['url'] as String?,
       tabChordContent: selected['chord_content'] as String?,
       tabLyrics: selected['lyrics'] as String?,
@@ -183,6 +187,7 @@ class TrackResult {
       'artwork_url': artworkUrl,
       'audio_url': audioUrl,
       'tab_source': tabSource,
+      'tab_source_id': tabSourceId,
       'tab_url': tabUrl,
       'tab_chord_content': tabChordContent,
       'tab_lyrics': tabLyrics,
@@ -210,11 +215,18 @@ class TrackResult {
     return '${diff.inDays}d ago';
   }
 
+  String get timeIdentified {
+    final hour = timestamp.hour.toString().padLeft(2, '0');
+    final minute = timestamp.minute.toString().padLeft(2, '0');
+    return 'Identified at $hour:$minute';
+  }
+
   TrackResult copyWith({
     bool? isSaved,
     String? artworkUrl,
     String? audioUrl,
     String? tabSource,
+    String? tabSourceId,
     String? tabUrl,
     String? tabChordContent,
     String? tabLyrics,
@@ -235,6 +247,7 @@ class TrackResult {
       artworkUrl: artworkUrl ?? this.artworkUrl,
       audioUrl: audioUrl ?? this.audioUrl,
       tabSource: tabSource ?? this.tabSource,
+      tabSourceId: tabSourceId ?? this.tabSourceId,
       tabUrl: tabUrl ?? this.tabUrl,
       tabChordContent: tabChordContent ?? this.tabChordContent,
       tabLyrics: tabLyrics ?? this.tabLyrics,

@@ -127,6 +127,7 @@ class _SavedTab extends StatelessWidget {
           itemBuilder: (context, i) => _LibraryCard(
             result: saved[i],
             accentColor: AppColors.primary,
+            onOpen: () => _openTrack(context, saved[i]),
             onRemove: () => state.toggleSave(saved[i]),
           ),
         );
@@ -167,6 +168,7 @@ class _HistoryTab extends StatelessWidget {
             return _LibraryCard(
               result: history[i],
               accentColor: colors[i % colors.length],
+              onOpen: () => _openTrack(context, history[i]),
               onToggleSave: () => state.toggleSave(history[i]),
             );
           },
@@ -183,20 +185,25 @@ class _HistoryTab extends StatelessWidget {
 class _LibraryCard extends StatelessWidget {
   final TrackResult result;
   final Color accentColor;
+  final VoidCallback onOpen;
   final VoidCallback? onRemove;
   final VoidCallback? onToggleSave;
 
   const _LibraryCard({
     required this.result,
     required this.accentColor,
+    required this.onOpen,
     this.onRemove,
     this.onToggleSave,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
+    return InkWell(
+      onTap: onOpen,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         color: AppColors.surfaceContainerLow.withOpacity(0.9),
@@ -261,20 +268,12 @@ class _LibraryCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 2),
-                Row(
-                  children: [
-                    _Chip(label: result.key, color: accentColor),
-                    const SizedBox(width: 6),
-                    _Chip(label: '${result.bpm} BPM', color: accentColor),
-                    const SizedBox(width: 6),
-                    Text(
-                      result.timeAgo,
-                      style: GoogleFonts.spaceGrotesk(
-                        fontSize: 10,
-                        color: AppColors.outline,
-                      ),
-                    ),
-                  ],
+                Text(
+                  result.timeIdentified,
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 10,
+                    color: AppColors.outline,
+                  ),
                 ),
               ],
             ),
@@ -327,8 +326,23 @@ class _LibraryCard extends StatelessWidget {
             ),
         ],
       ),
+      ),
     );
   }
+}
+
+void _openTrack(BuildContext context, TrackResult result) {
+  final isTabResult = result.tabSourceId != null ||
+      result.tabChordContent?.isNotEmpty == true ||
+      result.tabUrl?.isNotEmpty == true;
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => isTabResult
+          ? FindSongScreen(initialResult: result)
+          : AiAnalyzerScreen(initialResult: result),
+    ),
+  );
 }
 
 class _Chip extends StatelessWidget {

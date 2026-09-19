@@ -16,6 +16,7 @@ scipy==1.13.1
 # update python-dotenv to 1.0.1
 # ============================================================================
 flask==3.0.3
+flask-sock==0.7.0
 flask-cors==4.0.0
 flask-limiter==3.5.0
 werkzeug==3.0.3

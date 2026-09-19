@@ -308,6 +308,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           _TrackRow(
                             result: tracks[i],
                             color: trackColors[i % trackColors.length],
+                            onTap: () => _openTrack(context, tracks[i]),
                           ),
                           if (i < tracks.length - 1)
                             const SizedBox(height: 10),
@@ -864,16 +865,21 @@ class _CardButton extends StatelessWidget {
 class _TrackRow extends StatelessWidget {
   final TrackResult result;
   final Color color;
+  final VoidCallback onTap;
 
   const _TrackRow({
     required this.result,
     required this.color,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         color: AppColors.surfaceContainerLow.withOpacity(0.9),
@@ -896,7 +902,20 @@ class _TrackRow extends StatelessWidget {
                 ],
               ),
             ),
-            child: Icon(Icons.music_note_rounded, color: color, size: 22),
+            child: result.artworkUrl == null
+                ? Icon(Icons.graphic_eq_rounded, color: color, size: 22)
+                : ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.network(
+                      result.artworkUrl!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Icon(
+                        Icons.graphic_eq_rounded,
+                        color: color,
+                        size: 22,
+                      ),
+                    ),
+                  ),
           ),
           const SizedBox(width: 12),
 
@@ -917,7 +936,7 @@ class _TrackRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '${result.artist} • ${result.bpm} BPM',
+                  result.artist,
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 12,
                     color: AppColors.onSurfaceVariant,
@@ -927,7 +946,7 @@ class _TrackRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  result.timeAgo,
+                  result.timeIdentified,
                   style: GoogleFonts.spaceGrotesk(
                     fontSize: 10,
                     color: AppColors.outline,
@@ -946,26 +965,23 @@ class _TrackRow extends StatelessWidget {
                   color: AppColors.primary.withOpacity(0.7), size: 16),
             ),
 
-          // Confidence chip
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              color: color.withOpacity(0.1),
-              border: Border.all(color: color.withOpacity(0.25)),
-            ),
-            child: Text(
-              result.confidencePercent,
-              style: GoogleFonts.spaceGrotesk(
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: color,
-              ),
-            ),
-          ),
         ],
+      ),
       ),
     );
   }
+}
+
+void _openTrack(BuildContext context, TrackResult result) {
+  final isTabResult = result.tabSourceId != null ||
+      result.tabChordContent?.isNotEmpty == true ||
+      result.tabUrl?.isNotEmpty == true;
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => isTabResult
+          ? FindSongScreen(initialResult: result)
+          : AiAnalyzerScreen(initialResult: result),
+    ),
+  );
 }

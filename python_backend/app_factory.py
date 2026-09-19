@@ -15,7 +15,7 @@ import compat
 from config import get_config
 
 # Import extensions
-from extensions import init_extensions
+from extensions import init_extensions, sock
 
 # Import error handlers
 from error_handlers import register_error_handlers, register_custom_error_handlers
@@ -82,6 +82,8 @@ def register_blueprints(app: Flask, config) -> None:
     from blueprints.songformer import songformer_bp
     from blueprints.debug import debug_bp
     from blueprints.tabs import tabs_bp
+    from blueprints.tabs.routes import register_socket_routes
+    from blueprints.music_ai import music_ai_bp
 
     # Register blueprints
     app.register_blueprint(health_bp)
@@ -91,6 +93,8 @@ def register_blueprints(app: Flask, config) -> None:
     app.register_blueprint(lyrics_bp)
     app.register_blueprint(songformer_bp)
     app.register_blueprint(tabs_bp)
+    app.register_blueprint(music_ai_bp)
+    register_socket_routes(sock)
 
     # Register debug blueprint only in non-production mode
     if not config.PRODUCTION_MODE:
@@ -155,6 +159,14 @@ def init_services(app: Flask, config) -> None:
     except Exception as e:
         log_info(f"Failed to initialize SongFormer service: {e}")
         services['songformer'] = None
+
+    try:
+        from services.music_ai_service import MusicAiService
+        services['music_ai'] = MusicAiService(config)
+        log_info("Music AI service initialized")
+    except Exception as e:
+        log_info(f"Failed to initialize music AI service: {e}")
+        services['music_ai'] = None
 
 
 

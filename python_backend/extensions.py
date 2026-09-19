@@ -12,11 +12,13 @@ from flask import Flask
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_sock import Sock
 
 
 # Initialize extensions (will be configured in app factory)
 cors = CORS()
 limiter = Limiter(key_func=get_remote_address)
+sock = Sock()
 
 
 def init_cors(app: Flask, config) -> None:
@@ -89,5 +91,6 @@ def init_extensions(app: Flask, config) -> None:
     init_logging(app, config)
     init_cors(app, config)
     init_limiter(app, config)
+    sock.init_app(app)
 
     app.logger.info("All extensions initialized successfully")

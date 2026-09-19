@@ -231,13 +231,17 @@ class TabFinderService:
             ):
                 return None
 
-        _, chord_content, _ = self._extract_content(content)
+        chords, chord_content, _ = self._extract_content(content)
         return {
             "source_id": source_id,
             "source": source["name"],
             "language": language,
             "url": selected_url,
-            "chord_content": chord_content[:12000],
+            "chords": chords,
+            # Keep the complete tab. Ultimate Guitar songs can be longer than
+            # 12,000 characters, and truncating here makes the app show only
+            # the beginning even though the source page contains the full song.
+            "chord_content": chord_content,
         }
 
     @staticmethod
@@ -343,8 +347,11 @@ class TabFinderService:
             if parsed[1]:
                 return parsed
 
+        # Ultimate Guitar's store is JSON with double-quoted strings. Do not
+        # exclude apostrophes from the value: a lyric such as "I've been..."
+        # otherwise makes the regex stop halfway through the song.
         embedded_match = re.search(
-            r"[\"']wiki_tab[\"']\s*:\s*\{\s*[\"']content[\"']\s*:\s*[\"']((?:\\.|[^\"'\\])*)",
+            r'"wiki_tab"\s*:\s*\{\s*"content"\s*:\s*"((?:\\.|[^"\\])*)',
             embedded,
             flags=re.I,
         )

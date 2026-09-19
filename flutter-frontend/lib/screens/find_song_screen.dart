@@ -6,20 +6,23 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:android_intent_plus/android_intent.dart';
 import '../theme/app_colors.dart';
 import '../widgets/bottom_nav_bar.dart';
 import '../models/track_result.dart';
+import '../models/ai_chat_message.dart';
 import '../services/audio_recorder_service.dart';
 import '../services/recognition_service.dart';
 import '../services/music_search_service.dart';
 import '../models/song_search_result.dart';
 import '../providers/app_state.dart';
-import '../config/api_config.dart';
 import 'home_screen.dart';
 import 'ai_analyzer_screen.dart';
 import 'library_screen.dart';
 import 'settings_screen.dart';
 import '../services/storage_service.dart';
+import '../services/music_ai_service.dart';
 
 // ─────────────────────────────────────────────────────────────
 // Screen states
@@ -27,7 +30,9 @@ import '../services/storage_service.dart';
 enum _ScanState { idle, search, recording, analyzing, result, error }
 
 class FindSongScreen extends StatefulWidget {
-  const FindSongScreen({super.key});
+  final TrackResult? initialResult;
+
+  const FindSongScreen({super.key, this.initialResult});
 
   @override
   State<FindSongScreen> createState() => _FindSongScreenState();
@@ -39,7 +44,7 @@ class _FindSongScreenState extends State<FindSongScreen>
   TrackResult? _result;
   String? _errorMessage;
   bool _isPlaying = false;
-  int _recordingSecondsLeft = ApiConfig.recordingSeconds;
+  int _recordingSecondsLeft = 0;
   Timer? _recordingTimer;
   StreamSubscription? _amplitudeSubscription;
   double _amplitudeLevel = 0.05;
@@ -48,6 +53,11 @@ class _FindSongScreenState extends State<FindSongScreen>
   List<SongSearchResult> _searchResults = [];
   bool _isSearching = false;
   String? _searchError;
+  bool _autoListening = false;
+  bool _autoButtonPressed = false;
+  TrackResult? _pendingAutoResult;
+  List<AiChatMessage> _aiConversation = [];
+  Completer<void>? _recognitionCancel;
   Map<String, List<String>> _tabPreferences = {
     'en': ['ultimate_guitar'],
     'he': ['tab4u'],
@@ -75,9 +85,20 @@ class _FindSongScreenState extends State<FindSongScreen>
   @override
   void initState() {
     super.initState();
-    StorageService().loadTabPreferences().then((preferences) {
+    if (widget.initialResult != null) {
+      _result = widget.initialResult;
+      _scanState = _ScanState.result;
+    }
+    final storage = StorageService();
+    storage.loadTabPreferences().then((preferences) {
       if (mounted && preferences.values.any((sources) => sources.isNotEmpty)) {
         setState(() => _tabPreferences = preferences);
+      }
+    });
+    storage.loadAutoShazam().then((enabled) {
+      if (!mounted || widget.initialResult != null) return;
+      if (enabled && _scanState == _ScanState.idle) {
+        unawaited(_startAutoListening());
       }
     });
 
@@ -137,6 +158,7 @@ class _FindSongScreenState extends State<FindSongScreen>
     _amplitudeSubscription?.cancel();
     _searchDebounce?.cancel();
     _searchController.dispose();
+    _recognitionCancel?.complete();
     _recorder.dispose();
     _audioPlayer.dispose();
     super.dispose();
@@ -170,32 +192,55 @@ class _FindSongScreenState extends State<FindSongScreen>
   // ── Flow ─────────────────────────────────────────────────────────
 
   Future<void> _startScan() async {
+    if (_pendingAutoResult != null) {
+      final result = _pendingAutoResult!;
+      _pendingAutoResult = null;
+      await _showResult(result);
+      return;
+    }
+
+    // Auto Shazam may already be listening in the background. Show the
+    // listening animation, but never create a second socket session.
+    if (_autoListening) {
+      _autoButtonPressed = true;
+      if (_scanState == _ScanState.idle && mounted) {
+        setState(() => _scanState = _ScanState.recording);
+      }
+      return;
+    }
+
+    if (_scanState == _ScanState.recording ||
+        _scanState == _ScanState.analyzing) {
+      return;
+    }
+
+    await _beginRecognition(background: false);
+  }
+
+  Future<void> _startAutoListening() async {
+    if (_autoListening || _pendingAutoResult != null || !mounted) return;
+    await _beginRecognition(background: true);
+  }
+
+  Future<void> _beginRecognition({required bool background}) async {
     _recordingTimer?.cancel();
     _recordingTimer = null;
     await _amplitudeSubscription?.cancel();
     _amplitudeSubscription = null;
+    _autoListening = true;
+    _autoButtonPressed = !background;
+    _recognitionCancel = Completer<void>();
 
-    // Check permission first
-    final hasPermission = await _recorder.requestPermission();
-    if (!hasPermission) {
-      _showError('Microphone permission denied. Please enable it in Settings.');
-      return;
-    }
-
-    setState(() {
-      _scanState = _ScanState.recording;
-      _recordingSecondsLeft = ApiConfig.recordingSeconds;
-      _errorMessage = null;
-    });
-
-    final started = await _recorder.startRecording();
-    if (!started) {
-      _showError('Could not start recording. Please try again.');
-      return;
+    if (!background && mounted) {
+      setState(() {
+        _scanState = _ScanState.recording;
+        _recordingSecondsLeft = 0;
+        _errorMessage = null;
+      });
     }
 
     _amplitudeSubscription = _recorder.amplitudeStream.listen((amplitude) {
-      if (!mounted || _scanState != _ScanState.recording) return;
+      if (!mounted || !_autoListening) return;
       final db = amplitude.current;
       final level = db.isFinite && db > -55
           ? ((db + 55) / 35).clamp(0.0, 1.0).toDouble()
@@ -203,21 +248,52 @@ class _FindSongScreenState extends State<FindSongScreen>
       setState(() => _amplitudeLevel = level);
     });
 
-    // Countdown timer
+    // Show elapsed listening time. Recognition runs in short windows until a
+    // match is found, so there is no arbitrary ten-second cutoff.
     _recordingTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) {
         t.cancel();
         return;
       }
-      setState(() => _recordingSecondsLeft--);
-      if (_recordingSecondsLeft <= 0) {
-        t.cancel();
-        _finishRecordingAndSend();
+      if (_autoListening) {
+        setState(() => _recordingSecondsLeft++);
       }
     });
+
+    try {
+      final audioStream = await _recorder.startStream();
+      final result = await _recognizer.findTabsFromStream(
+        audioStream,
+        preferences: _tabPreferences,
+        cancelSignal: _recognitionCancel!.future,
+      );
+      final wasRequested = _autoButtonPressed;
+      await _stopRecognitionSession();
+
+      if (background &&
+          !wasRequested &&
+          mounted &&
+          _scanState == _ScanState.idle) {
+        _pendingAutoResult = result;
+        return;
+      }
+      await _showResult(result);
+    } catch (error) {
+      await _stopRecognitionSession();
+      if (!mounted) return;
+      if (_scanState == _ScanState.idle) return;
+      // Auto listening stays visually quiet until the user asks to see it;
+      // a manual WebSocket failure is shown normally.
+      if (!background || _autoButtonPressed) {
+        _showError(
+          'Streaming recognition failed: ${error.toString().replaceAll('RecognitionException: ', '')}',
+        );
+      }
+    }
   }
 
   void _openSearch() {
+    unawaited(_stopRecognitionSession());
     setState(() {
       _scanState = _ScanState.search;
       _searchError = null;
@@ -272,6 +348,7 @@ class _FindSongScreenState extends State<FindSongScreen>
       if (!mounted) return;
       setState(() {
         _result = resultWithArtwork;
+        _aiConversation = [];
         _scanState = _ScanState.result;
       });
     } catch (e) {
@@ -281,35 +358,45 @@ class _FindSongScreenState extends State<FindSongScreen>
     }
   }
 
-  Future<void> _finishRecordingAndSend() async {
+  Future<void> _stopRecognitionSession() async {
+    _autoListening = false;
+    if (_recognitionCancel != null && !_recognitionCancel!.isCompleted) {
+      _recognitionCancel!.complete();
+    }
+    _recognitionCancel = null;
+    await _recorder.cancelRecording();
     _recordingTimer?.cancel();
     _recordingTimer = null;
     await _amplitudeSubscription?.cancel();
     _amplitudeSubscription = null;
-    final audioPath = await _recorder.stopRecording();
+  }
 
-    setState(() => _scanState = _ScanState.analyzing);
+  Future<void> _showResult(TrackResult result) async {
+    await _stopRecognitionSession();
+    if (!mounted) return;
+    await context.read<AppState>().addIdentification(result);
 
-    try {
-      final result = await _recognizer.findTabsFromAudio(
-        audioPath ?? '',
-        preferences: _tabPreferences,
-      );
-      await _recognizer.cleanupFile(audioPath);
+    if (!mounted) return;
+    setState(() {
+      _result = result;
+      _aiConversation = [];
+      _scanState = _ScanState.result;
+    });
+  }
 
-      if (!mounted) return;
-      // Add to global state
-      await context.read<AppState>().addIdentification(result);
-
-      setState(() {
-        _result = result;
-        _scanState = _ScanState.result;
-      });
-    } catch (e) {
-      await _recognizer.cleanupFile(audioPath);
-      _showError(
-        'Recognition failed: ${e.toString().replaceAll('RecognitionException: ', '')}',
-      );
+  Future<void> _openAiChat() async {
+    final result = _result;
+    if (result == null || !mounted) return;
+    final conversation = await showModalBottomSheet<List<AiChatMessage>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) =>
+          _SongAiChatSheet(song: result, initialConversation: _aiConversation),
+    );
+    if (conversation != null && mounted) {
+      setState(() => _aiConversation = conversation);
     }
   }
 
@@ -322,15 +409,14 @@ class _FindSongScreenState extends State<FindSongScreen>
   }
 
   void _resetToIdle() {
-    _recordingTimer?.cancel();
-    _recordingTimer = null;
-    _amplitudeSubscription?.cancel();
-    _amplitudeSubscription = null;
-    _recorder.cancelRecording();
+    unawaited(_stopRecognitionSession());
     _amplitudeLevel = 0.05;
+    _pendingAutoResult = null;
+    _autoButtonPressed = false;
     setState(() {
       _scanState = _ScanState.idle;
       _result = null;
+      _aiConversation = [];
       _errorMessage = null;
       _isPlaying = false;
       _searchController.clear();
@@ -398,6 +484,7 @@ class _FindSongScreenState extends State<FindSongScreen>
           onPlayPause: () => _togglePlayback(),
           onReset: _resetToIdle,
           onToggleSave: () => context.read<AppState>().toggleSave(_result!),
+          onAskAi: _openAiChat,
         );
       case _ScanState.recording:
         return _RecordingView(
@@ -527,12 +614,10 @@ class _ListeningView extends StatelessWidget {
           child: SizedBox(
             width: double.infinity,
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.start,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                const SizedBox(height: 20),
-                _PingBadge(label: 'ACOUSTIC ENGINE READY'),
-                const SizedBox(height: 14),
+                const SizedBox(height: 18),
                 Text(
                   'Find an existing song',
                   style: GoogleFonts.sora(
@@ -650,69 +735,29 @@ class _ListeningView extends StatelessWidget {
                           height: 160,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            gradient: const RadialGradient(
-                              colors: [
-                                AppColors.surfaceContainerHigh,
-                                AppColors.surfaceContainer,
-                                AppColors.surfaceVariant,
-                              ],
+                            gradient: const LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [Color(0xFF2F7BFF), Color(0xFF1468F5)],
                             ),
                             border: Border.all(
-                              color: AppColors.secondary.withOpacity(0.8),
-                              width: 2,
+                              color: Color(0xFF74A8FF),
+                              width: 1.5,
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: AppColors.secondary.withOpacity(0.45),
-                                blurRadius: 45,
+                                color: Color(0xFF1468F5),
+                                blurRadius: 34,
+                                spreadRadius: 2,
                               ),
                               BoxShadow(
-                                color: AppColors.primary.withOpacity(0.6),
-                                blurRadius: 15,
+                                color: Color(0xFF74A8FF),
+                                blurRadius: 10,
                               ),
                             ],
                           ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(
-                                Icons.mic_rounded,
-                                color: AppColors.secondary,
-                                size: 44,
-                              ),
-                              const SizedBox(height: 6),
-                              SizedBox(
-                                height: 14,
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: List.generate(4, (i) {
-                                    final colors = [
-                                      AppColors.secondary,
-                                      AppColors.primary,
-                                      AppColors.secondary,
-                                      AppColors.primary,
-                                    ];
-                                    return Padding(
-                                      padding: const EdgeInsets.only(right: 3),
-                                      child: AnimatedBuilder(
-                                        animation: barAnims[i],
-                                        builder: (_, __) => Container(
-                                          width: 3,
-                                          height: 14 * barAnims[i].value,
-                                          decoration: BoxDecoration(
-                                            color: colors[i],
-                                            borderRadius: BorderRadius.circular(
-                                              3,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  }),
-                                ),
-                              ),
-                            ],
+                          child: const CustomPaint(
+                            painter: _ShazamLogoPainter(),
                           ),
                         ),
                       ],
@@ -721,7 +766,7 @@ class _ListeningView extends StatelessWidget {
                 ),
                 const SizedBox(height: 40),
                 Text(
-                  'SHAZAM IT',
+                  'TAP TO SHAZAM',
                   style: GoogleFonts.spaceGrotesk(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
@@ -731,7 +776,7 @@ class _ListeningView extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Records ${ApiConfig.recordingSeconds}s • Sends audio to the fingerprint engine',
+                  'Listens until a match is found • Sends short audio clips',
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 12,
                     color: AppColors.onSurfaceVariant.withOpacity(0.8),
@@ -1130,7 +1175,7 @@ class _RecordingView extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          'SEC',
+                          'SEC LISTENING',
                           style: GoogleFonts.spaceGrotesk(
                             fontSize: 9,
                             fontWeight: FontWeight.w600,
@@ -1146,7 +1191,7 @@ class _RecordingView extends StatelessWidget {
             ),
             const SizedBox(height: 40),
             Text(
-              'RECORDING AUDIO',
+              'LISTENING FOR A MATCH',
               style: GoogleFonts.spaceGrotesk(
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
@@ -1327,6 +1372,7 @@ class _ResultView extends StatelessWidget {
   final bool isPlaying;
   final VoidCallback onPlayPause;
   final VoidCallback onToggleSave;
+  final VoidCallback onAskAi;
 
   const _ResultView({
     super.key,
@@ -1335,6 +1381,7 @@ class _ResultView extends StatelessWidget {
     required this.isPlaying,
     required this.onPlayPause,
     required this.onToggleSave,
+    required this.onAskAi,
   });
 
   @override
@@ -1346,8 +1393,6 @@ class _ResultView extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Center(child: _PingBadge(label: 'FINGERPRINT MATCHED')),
-          const SizedBox(height: 14),
           Center(
             child: Text(
               'Match Found',
@@ -1356,16 +1401,6 @@ class _ResultView extends StatelessWidget {
                 fontWeight: FontWeight.w700,
                 color: AppColors.onSurface,
                 letterSpacing: -0.5,
-              ),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Center(
-            child: Text(
-              'Standard acoustic fingerprint verified',
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 13,
-                color: AppColors.onSurfaceVariant,
               ),
             ),
           ),
@@ -1407,92 +1442,13 @@ class _ResultView extends StatelessWidget {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Album art placeholder
-                          Container(
-                            width: 96,
-                            height: 96,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: AppColors.outlineVariant.withOpacity(
-                                  0.4,
-                                ),
-                              ),
-                              gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  AppColors.primary.withOpacity(0.3),
-                                  AppColors.secondary.withOpacity(0.2),
-                                  AppColors.surfaceContainerHighest,
-                                ],
-                              ),
-                            ),
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                const Icon(
-                                  Icons.album_rounded,
-                                  color: AppColors.primary,
-                                  size: 48,
-                                ),
-                                Positioned(
-                                  bottom: 6,
-                                  right: 6,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 5,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(4),
-                                      color: AppColors.surfaceContainerLowest
-                                          .withOpacity(0.9),
-                                      border: Border.all(
-                                        color: AppColors.secondary.withOpacity(
-                                          0.4,
-                                        ),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      'WAV',
-                                      style: GoogleFonts.spaceGrotesk(
-                                        fontSize: 8,
-                                        fontWeight: FontWeight.w700,
-                                        color: AppColors.secondary,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
+                          _SongArtwork(url: result.artworkUrl, size: 96),
                           const SizedBox(width: 16),
                           // Track details
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      'FINGERPRINT MATCHED',
-                                      style: GoogleFonts.spaceGrotesk(
-                                        fontSize: 9,
-                                        fontWeight: FontWeight.w700,
-                                        color: AppColors.secondary,
-                                        letterSpacing: 1.2,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    const Icon(
-                                      Icons.verified_rounded,
-                                      color: AppColors.secondary,
-                                      size: 12,
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 4),
                                 Text(
                                   result.title,
                                   style: GoogleFonts.sora(
@@ -1556,43 +1512,6 @@ class _ResultView extends StatelessWidget {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.only(top: 14),
-                        decoration: BoxDecoration(
-                          border: Border(
-                            top: BorderSide(
-                              color: AppColors.outlineVariant.withOpacity(0.2),
-                            ),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: _MetricChip(
-                                label: 'KEY',
-                                value: result.key,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: _MetricChip(
-                                label: 'TEMPO',
-                                value: '${result.bpm} BPM',
-                                valueColor: AppColors.secondary,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: _MetricChip(
-                                label: 'CONFIDENCE',
-                                value: result.confidencePercent,
-                                valueColor: AppColors.primary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
                     ],
                   ),
                 ),
@@ -1602,7 +1521,35 @@ class _ResultView extends StatelessWidget {
 
           const SizedBox(height: 16),
 
-          if (result.tabSource != null || result.tabUrl?.isNotEmpty == true) ...[
+          // Context-aware music theory assistant
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onAskAi,
+              icon: const Icon(Icons.auto_awesome_rounded, size: 19),
+              label: Text(
+                'ASK AI ABOUT THIS SONG',
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.secondary,
+                side: BorderSide(color: AppColors.secondary.withOpacity(0.45)),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          if (result.tabSource != null ||
+              result.tabUrl?.isNotEmpty == true) ...[
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
@@ -1712,6 +1659,10 @@ class _ResultView extends StatelessWidget {
                   icon: Icons.podcasts_rounded,
                   label: 'Spotify',
                   color: AppColors.secondary,
+                  onTap: () => _openMusicSearch(
+                    context,
+                    'https://open.spotify.com/search/${Uri.encodeComponent('${result.title} ${result.artist}')}',
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -1720,6 +1671,12 @@ class _ResultView extends StatelessWidget {
                   icon: Icons.music_note_rounded,
                   label: 'Apple',
                   color: AppColors.primary,
+                  onTap: () => _openMusicSearch(
+                    context,
+                    Uri.https('music.apple.com', '/us/search', {
+                      'term': '${result.title} ${result.artist}',
+                    }).toString(),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -1728,14 +1685,7 @@ class _ResultView extends StatelessWidget {
                   icon: Icons.share_rounded,
                   label: 'Share',
                   color: AppColors.secondary,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _QuickAction(
-                  icon: Icons.lyrics_rounded,
-                  label: 'Lyrics',
-                  color: AppColors.primary,
+                  onTap: () => _shareSong(context, result),
                 ),
               ),
             ],
@@ -1783,6 +1733,50 @@ class _ResultView extends StatelessWidget {
     );
   }
 
+  Future<void> _openMusicSearch(BuildContext context, String url) async {
+    final opened = await launchUrl(
+      Uri.parse(url),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the music service.')),
+      );
+    }
+  }
+
+  Future<void> _shareSong(BuildContext context, TrackResult result) async {
+    final text = '${result.title} — ${result.artist}';
+    try {
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        await AndroidIntent(
+          action: 'android.intent.action.SEND',
+          type: 'text/plain',
+          arguments: {
+            'android.intent.extra.SUBJECT': text,
+            'android.intent.extra.TEXT': text,
+          },
+        ).launch();
+        return;
+      }
+      final opened = await launchUrl(
+        Uri.parse('sms:?body=${Uri.encodeComponent(text)}'),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!opened && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open sharing.')),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open sharing.')),
+        );
+      }
+    }
+  }
+
   void _openFullScreenTabs(
     BuildContext context,
     TrackResult result, {
@@ -1798,6 +1792,7 @@ class _ResultView extends StatelessWidget {
             source: result.tabSource,
             url: result.tabUrl!,
             content: result.tabChordContent,
+            sourceId: result.tabSourceId,
             browser: browser,
           );
         },
@@ -1809,9 +1804,383 @@ class _ResultView extends StatelessWidget {
   }
 }
 
+class _SongAiChatSheet extends StatefulWidget {
+  final TrackResult song;
+  final List<AiChatMessage> initialConversation;
+
+  const _SongAiChatSheet({
+    required this.song,
+    required this.initialConversation,
+  });
+
+  @override
+  State<_SongAiChatSheet> createState() => _SongAiChatSheetState();
+}
+
+class _SongAiChatSheetState extends State<_SongAiChatSheet> {
+  final _inputController = TextEditingController();
+  final _scrollController = ScrollController();
+  final _ai = MusicAiService();
+  late List<AiChatMessage> _messages;
+  bool _isSending = false;
+  String? _error;
+
+  static const _suggestions = [
+    'Explain this chord progression',
+    'What scales can I use to solo?',
+    'How can I make this easier on guitar?',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _messages = [...widget.initialConversation];
+  }
+
+  @override
+  void dispose() {
+    _inputController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send([String? suggestedQuestion]) async {
+    final question = (suggestedQuestion ?? _inputController.text).trim();
+    if (question.isEmpty || _isSending) return;
+    _inputController.clear();
+    setState(() {
+      _error = null;
+      _isSending = true;
+      _messages.add(AiChatMessage(role: 'user', content: question));
+    });
+    _scrollToBottom();
+
+    try {
+      final answer = await _ai.ask(
+        song: widget.song,
+        question: question,
+        conversation: _messages.sublist(0, _messages.length - 1),
+      );
+      if (!mounted) return;
+      setState(() {
+        _messages.add(AiChatMessage(role: 'assistant', content: answer));
+        _isSending = false;
+      });
+      _scrollToBottom();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _messages.removeLast();
+        _isSending = false;
+        _error = error.toString().replaceFirst('MusicAiException: ', '');
+      });
+    }
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Container(
+      height: MediaQuery.sizeOf(context).height * 0.82,
+      padding: EdgeInsets.only(bottom: bottomInset),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      ),
+      child: Column(
+        children: [
+          const SizedBox(height: 10),
+          Container(
+            width: 42,
+            height: 4,
+            decoration: BoxDecoration(
+              color: AppColors.outlineVariant,
+              borderRadius: BorderRadius.circular(99),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.secondary.withOpacity(0.15),
+                  ),
+                  child: const Icon(
+                    Icons.auto_awesome_rounded,
+                    color: AppColors.secondary,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Song Coach',
+                        style: GoogleFonts.sora(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.onSurface,
+                        ),
+                      ),
+                      Text(
+                        '${widget.song.title} · ${widget.song.artist}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          color: AppColors.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context, _messages),
+                  icon: const Icon(Icons.close_rounded),
+                  color: AppColors.onSurfaceVariant,
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _messages.isEmpty
+                ? _Suggestions(suggestions: _suggestions, onSelected: _send)
+                : ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                    itemCount: _messages.length + (_isSending ? 1 : 0),
+                    itemBuilder: (context, index) {
+                      if (index == _messages.length) {
+                        return const _AiTypingBubble();
+                      }
+                      final message = _messages[index];
+                      return _AiMessageBubble(message: message);
+                    },
+                  ),
+          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: Text(
+                _error!,
+                style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _inputController,
+                    minLines: 1,
+                    maxLines: 4,
+                    textInputAction: TextInputAction.newline,
+                    style: const TextStyle(color: AppColors.onSurface),
+                    decoration: InputDecoration(
+                      hintText:
+                          'Ask about the harmony, rhythm, or guitar part…',
+                      hintStyle: TextStyle(
+                        color: AppColors.onSurfaceVariant.withOpacity(0.7),
+                        fontSize: 12,
+                      ),
+                      filled: true,
+                      fillColor: AppColors.surfaceContainerHigh,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(18),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                    ),
+                    onSubmitted: (_) => _send(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  onPressed: _isSending ? null : _send,
+                  icon: const Icon(Icons.arrow_upward_rounded),
+                  style: IconButton.styleFrom(
+                    backgroundColor: AppColors.secondary,
+                    foregroundColor: AppColors.background,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Suggestions extends StatelessWidget {
+  final List<String> suggestions;
+  final ValueChanged<String> onSelected;
+
+  const _Suggestions({required this.suggestions, required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 28, 20, 12),
+      children: [
+        Text(
+          'Ask anything about this song',
+          style: GoogleFonts.plusJakartaSans(
+            color: AppColors.onSurfaceVariant,
+            fontSize: 13,
+          ),
+        ),
+        const SizedBox(height: 14),
+        ...suggestions.map(
+          (suggestion) => Padding(
+            padding: const EdgeInsets.only(bottom: 9),
+            child: ActionChip(
+              label: Text(suggestion),
+              onPressed: () => onSelected(suggestion),
+              labelStyle: const TextStyle(
+                color: AppColors.onSurface,
+                fontSize: 12,
+              ),
+              side: BorderSide(
+                color: AppColors.outlineVariant.withOpacity(0.35),
+              ),
+              backgroundColor: AppColors.surfaceContainerLow,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AiMessageBubble extends StatelessWidget {
+  final AiChatMessage message;
+
+  const _AiMessageBubble({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final isUser = message.role == 'user';
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 330),
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        decoration: BoxDecoration(
+          color: isUser
+              ? AppColors.secondary.withOpacity(0.18)
+              : AppColors.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isUser
+                ? AppColors.secondary.withOpacity(0.25)
+                : AppColors.outlineVariant.withOpacity(0.18),
+          ),
+        ),
+        child: Text(
+          message.content,
+          style: const TextStyle(
+            color: AppColors.onSurface,
+            fontSize: 13,
+            height: 1.45,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AiTypingBubble extends StatelessWidget {
+  const _AiTypingBubble();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: EdgeInsets.only(bottom: 12, left: 4),
+        child: Text(
+          'Thinking…',
+          style: TextStyle(color: AppColors.onSurfaceVariant, fontSize: 12),
+        ),
+      ),
+    );
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 // Shared sub-widgets
 // ─────────────────────────────────────────────────────────────
+
+class _SongArtwork extends StatelessWidget {
+  final String? url;
+  final double size;
+
+  const _SongArtwork({required this.url, required this.size});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(size * 0.13),
+        border: Border.all(color: AppColors.outlineVariant.withOpacity(0.4)),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primary.withOpacity(0.3),
+            AppColors.secondary.withOpacity(0.2),
+            AppColors.surfaceContainerHighest,
+          ],
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: url?.isNotEmpty == true
+          ? Image.network(
+              url!,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _defaultArtwork(),
+            )
+          : _defaultArtwork(),
+    );
+  }
+
+  Widget _defaultArtwork() {
+    return Center(
+      child: Icon(
+        Icons.album_rounded,
+        color: AppColors.primary,
+        size: size * 0.5,
+      ),
+    );
+  }
+}
 
 class _TabMiniPlayer extends StatelessWidget {
   final TrackResult result;
@@ -1838,18 +2207,7 @@ class _TabMiniPlayer extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              color: AppColors.primary.withOpacity(0.15),
-            ),
-            child: const Icon(
-              Icons.music_note_rounded,
-              color: AppColors.primary,
-            ),
-          ),
+          _SongArtwork(url: result.artworkUrl, size: 42),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -1933,8 +2291,25 @@ class _TabMiniPlayer extends StatelessWidget {
 
 class _ChordSheet extends StatelessWidget {
   final String content;
+  final String? sourceId;
 
-  const _ChordSheet({required this.content});
+  const _ChordSheet({required this.content, this.sourceId});
+
+  bool get _isUltimateGuitar => sourceId == 'ultimate_guitar';
+
+  TextStyle _sheetStyle({required double fontSize, required Color color}) {
+    if (_isUltimateGuitar) {
+      // Ultimate Guitar's tab body uses Roboto Mono, 14px text with a 32px
+      // line rhythm. Keeping the same family for measurement and rendering
+      // is important because the chord columns are encoded as spaces.
+      return GoogleFonts.robotoMono(
+        fontSize: fontSize,
+        height: 1.4,
+        color: color,
+      );
+    }
+    return TextStyle(fontFamily: 'Tab4uFont', fontSize: fontSize, color: color);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1956,22 +2331,14 @@ class _ChordSheet extends StatelessWidget {
         builder: (context, constraints) {
           var widestLine = 0.0;
           for (final line in lines) {
+            final measureStyle = _sheetStyle(
+              fontSize: 14,
+              color: AppColors.onSurface,
+            );
             final measure = TextPainter(
               text: _isChordLine(line)
-                  ? TextSpan(
-                      style: const TextStyle(
-                        fontFamily: 'Tab4uFont',
-                        fontSize: 14,
-                      ),
-                      children: _chordSpans(line),
-                    )
-                  : TextSpan(
-                      text: line,
-                      style: const TextStyle(
-                        fontFamily: 'Tab4uFont',
-                        fontSize: 14,
-                      ),
-                    ),
+                  ? TextSpan(style: measureStyle, children: _chordSpans(line))
+                  : TextSpan(text: line, style: measureStyle),
               textDirection: TextDirection.ltr,
               maxLines: 1,
             )..layout();
@@ -1981,51 +2348,62 @@ class _ChordSheet extends StatelessWidget {
           // background, which are not fully reflected by plain-text width.
           final measuredWidth = widestLine + 8;
           final scale = (constraints.maxWidth / measuredWidth)
-              .clamp(0.8, 1.25)
+              .clamp(_isUltimateGuitar ? 0.55 : 0.8, 1.25)
               .toDouble();
           final fontSize = (14 * scale).clamp(8.0, 17.5).toDouble();
 
           return Align(
-            alignment: Alignment.centerRight,
+            alignment: _isUltimateGuitar
+                ? Alignment.centerLeft
+                : Alignment.centerRight,
             child: FittedBox(
               fit: BoxFit.scaleDown,
-              alignment: Alignment.centerRight,
+              alignment: _isUltimateGuitar
+                  ? Alignment.centerLeft
+                  : Alignment.centerRight,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
+                crossAxisAlignment: _isUltimateGuitar
+                    ? CrossAxisAlignment.start
+                    : CrossAxisAlignment.end,
                 children: [
-              for (final line in lines)
-                _isChordLine(line)
-                    ? Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text.rich(
-                          TextSpan(children: _chordSpans(line)),
-                          textDirection: TextDirection.ltr,
-                          textAlign: TextAlign.right,
-                          softWrap: false,
-                          maxLines: 1,
-                          style: TextStyle(
-                            fontFamily: 'Tab4uFont',
-                            fontSize: fontSize,
-                            color: AppColors.primary,
+                  for (final line in lines)
+                    _isChordLine(line)
+                        ? Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text.rich(
+                              TextSpan(children: _chordSpans(line)),
+                              textDirection: TextDirection.ltr,
+                              textAlign: _isUltimateGuitar
+                                  ? TextAlign.left
+                                  : TextAlign.right,
+                              softWrap: false,
+                              maxLines: 1,
+                              style: _sheetStyle(
+                                fontSize: fontSize,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          )
+                        : Padding(
+                            padding: EdgeInsets.zero,
+                            child: Text(
+                              _displayLine(
+                                line,
+                                preserveLeadingWhitespace: _isUltimateGuitar,
+                              ),
+                              textDirection: TextDirection.ltr,
+                              textAlign: _isUltimateGuitar
+                                  ? TextAlign.left
+                                  : TextAlign.right,
+                              softWrap: false,
+                              maxLines: 1,
+                              style: _sheetStyle(
+                                fontSize: fontSize,
+                                color: AppColors.onSurface,
+                              ),
+                            ),
                           ),
-                        ),
-                      )
-                    : Padding(
-                        padding: EdgeInsets.zero,
-                        child: Text(
-                          _displayLine(line),
-                          textDirection: TextDirection.ltr,
-                          textAlign: TextAlign.right,
-                          softWrap: false,
-                          maxLines: 1,
-                          style: TextStyle(
-                            fontFamily: 'Tab4uFont',
-                            fontSize: fontSize,
-                            color: AppColors.onSurface,
-                          ),
-                        ),
-                      ),
                 ],
               ),
             ),
@@ -2081,10 +2459,15 @@ class _ChordSheet extends StatelessWidget {
     return spans;
   }
 
-  static String _displayLine(String line) {
+  static String _displayLine(
+    String line, {
+    bool preserveLeadingWhitespace = false,
+  }) {
     // Chord rows keep their source whitespace for accurate chord placement.
     // Lyric rows are right-aligned, so their indentation is only visual noise.
-    final lyric = line.replaceFirst(RegExp(r'^[\t \u00a0]+'), '');
+    final lyric = preserveLeadingWhitespace
+        ? line
+        : line.replaceFirst(RegExp(r'^[\t \u00a0]+'), '');
     // Keep Hebrew section labels such as "פתיחה:" resolving the neutral
     // colon on the visual right.
     return lyric.replaceAllMapped(
@@ -2092,7 +2475,6 @@ class _ChordSheet extends StatelessWidget {
       (_) => '\u200F:\u200F',
     );
   }
-
 }
 
 class _TabContentSwitcher extends StatefulWidget {
@@ -2130,6 +2512,17 @@ class _TabContentSwitcherState extends State<_TabContentSwitcher> {
             Expanded(child: _modeButton('CHORDS', false, hasChords)),
             const SizedBox(width: 8),
             Expanded(child: _modeButton('WEBSITE', true, hasBrowser)),
+            if (widget.result.tabSourceId == 'ultimate_guitar')
+              TextButton.icon(
+                onPressed: hasBrowser ? _openInApp : null,
+                icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                label: const Text('APP'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.secondary,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
             IconButton(
               tooltip: 'Maximize current view',
               onPressed: (_browser ? hasBrowser : hasChords)
@@ -2152,7 +2545,10 @@ class _TabContentSwitcherState extends State<_TabContentSwitcher> {
           ? _TabWebView(url: widget.result.tabUrl!)
           : hasChords
           ? SingleChildScrollView(
-              child: _ChordSheet(content: widget.result.tabChordContent!),
+              child: _ChordSheet(
+                content: widget.result.tabChordContent!,
+                sourceId: widget.result.tabSourceId,
+              ),
             )
           : const Center(child: Text('No tab view available.')),
     );
@@ -2216,6 +2612,30 @@ class _TabContentSwitcherState extends State<_TabContentSwitcher> {
       ),
     );
   }
+
+  Future<void> _openInApp() async {
+    final value = widget.result.tabUrl;
+    if (value == null || value.isEmpty) return;
+    final uri = Uri.parse(value);
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await AndroidIntent(
+          action: 'android.intent.action.VIEW',
+          data: value,
+          package: 'com.ultimateguitar.tabs',
+        ).launch();
+        return;
+      } catch (_) {
+        // The app may not be installed or may not accept this tab URL.
+      }
+    }
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ultimate Guitar could not be opened.')),
+      );
+    }
+  }
 }
 
 class _TabWebView extends StatefulWidget {
@@ -2235,11 +2655,7 @@ class _TabWebViewState extends State<_TabWebView> {
     super.initState();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onWebResourceError: (_) {},
-        ),
-      )
+      ..setNavigationDelegate(NavigationDelegate(onWebResourceError: (_) {}))
       ..loadRequest(Uri.parse(widget.url));
   }
 
@@ -2262,6 +2678,7 @@ class _FullScreenChordSheet extends StatelessWidget {
   final String? source;
   final String url;
   final String? content;
+  final String? sourceId;
   final bool browser;
 
   const _FullScreenChordSheet({
@@ -2269,6 +2686,7 @@ class _FullScreenChordSheet extends StatelessWidget {
     required this.source,
     required this.url,
     required this.content,
+    required this.sourceId,
     required this.browser,
   });
 
@@ -2312,7 +2730,10 @@ class _FullScreenChordSheet extends StatelessWidget {
             ? _TabWebView(url: url)
             : SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(8, 12, 8, 32),
-                child: _ExpandedChordSheet(content: content!),
+                child: _ExpandedChordSheet(
+                  content: content!,
+                  sourceId: sourceId,
+                ),
               ),
       ),
     );
@@ -2321,8 +2742,22 @@ class _FullScreenChordSheet extends StatelessWidget {
 
 class _ExpandedChordSheet extends StatelessWidget {
   final String content;
+  final String? sourceId;
 
-  const _ExpandedChordSheet({required this.content});
+  const _ExpandedChordSheet({required this.content, this.sourceId});
+
+  bool get _isUltimateGuitar => sourceId == 'ultimate_guitar';
+
+  TextStyle _sheetStyle({required double fontSize, required Color color}) {
+    if (_isUltimateGuitar) {
+      return GoogleFonts.robotoMono(
+        fontSize: fontSize,
+        height: 1.4,
+        color: color,
+      );
+    }
+    return TextStyle(fontFamily: 'Tab4uFont', fontSize: fontSize, color: color);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2335,36 +2770,32 @@ class _ExpandedChordSheet extends StatelessWidget {
       builder: (context, constraints) {
         var widestLine = 0.0;
         for (final line in lines) {
+          final measureStyle = _sheetStyle(
+            fontSize: 14,
+            color: AppColors.onSurface,
+          );
           final painter = TextPainter(
             text: _ChordSheet._isChordLine(line)
                 ? TextSpan(
-                    style: const TextStyle(
-                      fontFamily: 'Tab4uFont',
-                      fontSize: 14,
-                    ),
+                    style: measureStyle,
                     children: _ChordSheet._chordSpans(line),
                   )
-                : TextSpan(
-                    text: line,
-                    style: const TextStyle(
-                      fontFamily: 'Tab4uFont',
-                      fontSize: 14,
-                    ),
-                  ),
+                : TextSpan(text: line, style: measureStyle),
             textDirection: TextDirection.ltr,
             maxLines: 1,
           )..layout();
           if (painter.width > widestLine) widestLine = painter.width;
         }
-        final fontSize = (14 * ((constraints.maxWidth - 8) /
-                    (widestLine + 2)))
-            .clamp(10.0, 28.0)
+        final fontSize = (14 * ((constraints.maxWidth - 8) / (widestLine + 2)))
+            .clamp(_isUltimateGuitar ? 7.5 : 10.0, 28.0)
             .toDouble();
 
         return Align(
-          alignment: Alignment.topRight,
+          alignment: _isUltimateGuitar ? Alignment.topLeft : Alignment.topRight,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: _isUltimateGuitar
+                ? CrossAxisAlignment.start
+                : CrossAxisAlignment.end,
             children: [
               for (final line in lines)
                 _ChordSheet._isChordLine(line)
@@ -2373,24 +2804,29 @@ class _ExpandedChordSheet extends StatelessWidget {
                         child: Text.rich(
                           TextSpan(children: _ChordSheet._chordSpans(line)),
                           textDirection: TextDirection.ltr,
-                          textAlign: TextAlign.right,
+                          textAlign: _isUltimateGuitar
+                              ? TextAlign.left
+                              : TextAlign.right,
                           softWrap: false,
                           maxLines: 1,
-                          style: TextStyle(
-                            fontFamily: 'Tab4uFont',
+                          style: _sheetStyle(
                             fontSize: fontSize,
                             color: AppColors.primary,
                           ),
                         ),
                       )
-                : Text(
-                        _ChordSheet._displayLine(line),
+                    : Text(
+                        _ChordSheet._displayLine(
+                          line,
+                          preserveLeadingWhitespace: _isUltimateGuitar,
+                        ),
                         textDirection: TextDirection.ltr,
-                        textAlign: TextAlign.right,
+                        textAlign: _isUltimateGuitar
+                            ? TextAlign.left
+                            : TextAlign.right,
                         softWrap: false,
                         maxLines: 1,
-                        style: TextStyle(
-                          fontFamily: 'Tab4uFont',
+                        style: _sheetStyle(
                           fontSize: fontSize,
                           color: AppColors.onSurface,
                         ),
@@ -2409,85 +2845,45 @@ String _formatDuration(Duration duration) {
   return '$minutes:$seconds';
 }
 
-class _MetricChip extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color? valueColor;
-
-  const _MetricChip({
-    required this.label,
-    required this.value,
-    this.valueColor,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10),
-        color: AppColors.surfaceContainerLow.withOpacity(0.7),
-        border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Text(
-            label,
-            style: GoogleFonts.spaceGrotesk(
-              fontSize: 9,
-              fontWeight: FontWeight.w600,
-              color: AppColors.onSurfaceVariant,
-              letterSpacing: 1.0,
-            ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            value,
-            style: GoogleFonts.spaceGrotesk(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: valueColor ?? AppColors.onSurface,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _QuickAction extends StatelessWidget {
   final IconData icon;
   final String label;
   final Color color;
+  final VoidCallback onTap;
 
   const _QuickAction({
     required this.icon,
     required this.label,
     required this.color,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: AppColors.surfaceContainer,
-        border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 22),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: GoogleFonts.spaceGrotesk(
-              fontSize: 10,
-              color: AppColors.onSurfaceVariant,
-              fontWeight: FontWeight.w500,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: AppColors.surfaceContainer,
+          border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 22),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 10,
+                color: AppColors.onSurfaceVariant,
+                fontWeight: FontWeight.w500,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -2540,6 +2936,98 @@ class _DashedCirclePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_DashedCirclePainter old) => old.color != color;
+}
+
+/// The Shazam mark, rendered from the official Simple Icons geometry.
+class _ShazamLogoPainter extends CustomPainter {
+  const _ShazamLogoPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.shortestSide * 0.29;
+    final white = Paint()..color = Colors.white;
+    final blue = Paint()..color = const Color(0xFF1D6DF2);
+
+    // Shazam's mark is a white disc with the characteristic blue, angular S
+    // cut through its center.
+    canvas.drawCircle(center, radius, white);
+    final path = Path()
+      ..moveTo(size.width * 0.42, size.height * 0.35)
+      ..cubicTo(
+        size.width * 0.50,
+        size.height * 0.28,
+        size.width * 0.61,
+        size.height * 0.29,
+        size.width * 0.68,
+        size.height * 0.36,
+      )
+      ..lineTo(size.width * 0.61, size.height * 0.43)
+      ..cubicTo(
+        size.width * 0.56,
+        size.height * 0.38,
+        size.width * 0.49,
+        size.height * 0.38,
+        size.width * 0.45,
+        size.height * 0.42,
+      )
+      ..cubicTo(
+        size.width * 0.40,
+        size.height * 0.47,
+        size.width * 0.42,
+        size.height * 0.51,
+        size.width * 0.48,
+        size.height * 0.54,
+      )
+      ..lineTo(size.width * 0.59, size.height * 0.60)
+      ..cubicTo(
+        size.width * 0.67,
+        size.height * 0.65,
+        size.width * 0.68,
+        size.height * 0.73,
+        size.width * 0.61,
+        size.height * 0.79,
+      )
+      ..cubicTo(
+        size.width * 0.53,
+        size.height * 0.86,
+        size.width * 0.42,
+        size.height * 0.85,
+        size.width * 0.34,
+        size.height * 0.78,
+      )
+      ..lineTo(size.width * 0.41, size.height * 0.71)
+      ..cubicTo(
+        size.width * 0.47,
+        size.height * 0.76,
+        size.width * 0.54,
+        size.height * 0.76,
+        size.width * 0.58,
+        size.height * 0.72,
+      )
+      ..cubicTo(
+        size.width * 0.62,
+        size.height * 0.68,
+        size.width * 0.60,
+        size.height * 0.64,
+        size.width * 0.54,
+        size.height * 0.61,
+      )
+      ..lineTo(size.width * 0.43, size.height * 0.55)
+      ..cubicTo(
+        size.width * 0.34,
+        size.height * 0.50,
+        size.width * 0.35,
+        size.height * 0.41,
+        size.width * 0.42,
+        size.height * 0.35,
+      )
+      ..close();
+    canvas.drawPath(path, blue);
+  }
+
+  @override
+  bool shouldRepaint(_ShazamLogoPainter oldDelegate) => false;
 }
 
 class _PingBadge extends StatefulWidget {

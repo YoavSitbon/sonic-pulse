@@ -20,7 +20,9 @@ import 'library_screen.dart';
 enum _AnalyzeState { idle, recording, analyzing, result, error }
 
 class AiAnalyzerScreen extends StatefulWidget {
-  const AiAnalyzerScreen({super.key});
+  final TrackResult? initialResult;
+
+  const AiAnalyzerScreen({super.key, this.initialResult});
 
   @override
   State<AiAnalyzerScreen> createState() => _AiAnalyzerScreenState();
@@ -52,6 +54,10 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
   @override
   void initState() {
     super.initState();
+    if (widget.initialResult != null) {
+      _result = widget.initialResult;
+      _state = _AnalyzeState.result;
+    }
 
     _outerPulse = AnimationController(
       vsync: this,

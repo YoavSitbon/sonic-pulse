@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import wave
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -8,6 +9,82 @@ from extensions import limiter
 from services.tabs import TAB_SOURCES, TabFinderService
 
 tabs_bp = Blueprint("tabs", __name__)
+
+
+def register_socket_routes(sock):
+    """Register the streaming recognizer on the app-level WebSocket server."""
+
+    @sock.route("/ws/find-existing-song")
+    def find_tabs_stream(ws):
+        preferences = {}
+        audio_buffer = bytearray()
+        sample_rate = 44100
+        sample_width = 2  # PCM16
+        channels = 1
+        window_seconds = 5
+        window_bytes = sample_rate * sample_width * channels * window_seconds
+        elapsed_seconds = 0
+
+        try:
+            while True:
+                message = ws.receive()
+                if message is None:
+                    return
+
+                if isinstance(message, str):
+                    control = json.loads(message)
+                    if control.get("type") == "cancel":
+                        return
+                    if control.get("type") == "start":
+                        preferences = control.get("preferences") or {}
+                    continue
+
+                audio_buffer.extend(message)
+                while len(audio_buffer) >= window_bytes:
+                    window = bytes(audio_buffer[:window_bytes])
+                    del audio_buffer[:window_bytes]
+                    elapsed_seconds += window_seconds
+
+                    with tempfile.NamedTemporaryFile(
+                        delete=False, suffix=".wav"
+                    ) as handle:
+                        window_path = handle.name
+                    try:
+                        with wave.open(window_path, "wb") as wav_file:
+                            wav_file.setnchannels(channels)
+                            wav_file.setsampwidth(sample_width)
+                            wav_file.setframerate(sample_rate)
+                            wav_file.writeframes(window)
+
+                        try:
+                            result = TabFinderService().find_tabs(
+                                audio_path=window_path,
+                                preferences=preferences,
+                            )
+                        except Exception:
+                            # A rolling window without a match is expected.
+                            result = None
+
+                        if result and result.get("success"):
+                            ws.send(json.dumps(result))
+                            return
+
+                        ws.send(json.dumps({
+                            "type": "progress",
+                            "seconds": elapsed_seconds,
+                        }))
+                    finally:
+                        if os.path.exists(window_path):
+                            os.unlink(window_path)
+        except Exception:
+            current_app.logger.exception("streaming song recognition failed")
+            try:
+                ws.send(json.dumps({
+                    "type": "error",
+                    "error": "Streaming recognition failed.",
+                }))
+            except Exception:
+                pass
 
 
 @tabs_bp.get("/api/tab-sources")
