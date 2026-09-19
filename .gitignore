@@ -46,3 +46,10 @@ app.*.map.json
 
 # Backend
 python_backend/.env
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+*.tfplan

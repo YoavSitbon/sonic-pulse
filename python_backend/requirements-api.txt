@@ -1,0 +1,11 @@
+flask==3.0.3
+flask-sock==0.7.0
+flask-cors==4.0.0
+flask-limiter==3.5.0
+werkzeug==3.0.3
+gunicorn==22.0.0
+python-dotenv==1.0.1
+limits==5.2.0
+requests==2.32.3
+shazamio==0.6.0
+lyricsgenius==3.6.2

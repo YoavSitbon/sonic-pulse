@@ -62,6 +62,7 @@ COPY app.py .
 COPY app_factory.py .
 COPY config.py .
 COPY config/ config/
+COPY templates/ templates/
 COPY services/ services/
 COPY blueprints/ blueprints/
 COPY models/ models/
@@ -108,6 +109,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 # Set environment variables
 ENV FLASK_ENV=production
 ENV FLASK_DEBUG=False
+ENV SERVICE_ROLE=audio
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
