@@ -33,6 +33,8 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/1min.m4a
   fonts:
     - family: Tab4uFont
       fonts:

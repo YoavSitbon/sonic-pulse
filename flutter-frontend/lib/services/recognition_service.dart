@@ -6,10 +6,75 @@ import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../config/api_config.dart';
 import '../models/track_result.dart';
+import '../models/youtube_video.dart';
 
 /// Sends audio files to the Python backend for recognition / analysis.
 ///
 class RecognitionService {
+  Future<YouTubeSearchResults> searchYouTube(
+    String query, {
+    bool shorts = false,
+  }) async {
+    final uri =
+        Uri.parse(
+          '${ApiConfig.baseUrl}${ApiConfig.youtubeSearchEndpoint}',
+        ).replace(
+          queryParameters: {
+            'query': query,
+            'type': shorts ? 'shorts' : 'videos',
+          },
+        );
+    final response = await http.get(uri).timeout(ApiConfig.requestTimeout);
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    if (response.statusCode != 200) {
+      throw RecognitionException(
+        json['error']?.toString() ??
+            'YouTube search failed (${response.statusCode}).',
+      );
+    }
+
+    final results = (json['results'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => YouTubeVideo.fromJson(item.cast<String, dynamic>()))
+        .where((video) => video.videoId.isNotEmpty)
+        .toList();
+    return YouTubeSearchResults(
+      videos: shorts ? const [] : results,
+      shorts: shorts ? results : const [],
+    );
+  }
+
+  Future<TrackResult> analyzeYouTubeVideo(YouTubeVideo video) async {
+    final response = await http
+        .post(
+          Uri.parse('${ApiConfig.baseUrl}${ApiConfig.analyzeAudioEndpoint}'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'youtube_url': video.url}),
+        )
+        .timeout(ApiConfig.requestTimeout);
+    if (response.statusCode != 200) {
+      throw RecognitionException(_serverError(response));
+    }
+    try {
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      if (json['success'] != true) {
+        throw RecognitionException(
+          json['error'] as String? ??
+              'The backend could not analyze the video.',
+        );
+      }
+      return TrackResult.fromAudioAnalysisJson(json).copyWith(
+        title: json['title'] as String? ?? video.title,
+        artist: json['artist'] as String? ?? video.channel,
+        artworkUrl: json['artwork_url'] as String? ?? video.thumbnail,
+        audioUrl: json['audio_url'] as String?,
+      );
+    } catch (e) {
+      if (e is RecognitionException) rethrow;
+      throw RecognitionException('Failed to parse YouTube analysis: $e');
+    }
+  }
+
   Future<TrackResult> findTabsFromStream(
     Stream<Uint8List> audioStream, {
     Map<String, List<String>> preferences = const {},
@@ -198,7 +263,9 @@ class RecognitionService {
       );
     }
 
-    final uri = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.analyzeEndpoint}');
+    final uri = Uri.parse(
+      '${ApiConfig.baseUrl}${ApiConfig.analyzeAudioEndpoint}',
+    );
     final request = http.MultipartRequest('POST', uri);
     request.files.add(
       await http.MultipartFile.fromPath(
@@ -223,7 +290,7 @@ class RecognitionService {
               'The backend could not analyze the recording.',
         );
       }
-      return TrackResult.fromChordRecognitionJson(json);
+      return TrackResult.fromAudioAnalysisJson(json);
     } catch (e) {
       if (e is RecognitionException) rethrow;
       throw RecognitionException('Failed to parse server response: $e');

@@ -82,6 +82,7 @@ class Config:
     # External service timeouts (seconds)
     EXTERNAL_API_TIMEOUT = 30
     YOUTUBE_API_TIMEOUT = 15
+    YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', '').strip()
     AUDIO_EXTRACTION_TIMEOUT = 60
 
     # File size limits for different operations (MB)

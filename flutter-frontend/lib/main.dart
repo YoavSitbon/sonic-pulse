@@ -6,7 +6,7 @@ import 'screens/home_screen.dart';
 import 'providers/app_state.dart';
 import 'services/http_overrides.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   configureHttpOverrides();
   SystemChrome.setSystemUIOverlayStyle(

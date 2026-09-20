@@ -7,5 +7,6 @@ gunicorn==22.0.0
 python-dotenv==1.0.1
 limits==5.2.0
 requests==2.32.3
+yt-dlp>=2026.8.19,<2027
 shazamio==0.6.0
 lyricsgenius==3.6.2

@@ -37,6 +37,14 @@ class TrackResult {
   final String? tabChordContent;
   final String? tabLyrics;
   final String? language;
+  final List<ChordSegment> chordSegments;
+  final List<double> beats;
+  final List<double> downbeats;
+  final List<String> chordsByBeat;
+  final double duration;
+  final String beatModel;
+  final String chordModel;
+  final Map<String, dynamic> analysisData;
   bool isSaved;
 
   TrackResult({
@@ -59,6 +67,14 @@ class TrackResult {
     this.tabChordContent,
     this.tabLyrics,
     this.language,
+    this.chordSegments = const [],
+    this.beats = const [],
+    this.downbeats = const [],
+    this.chordsByBeat = const [],
+    this.duration = 0,
+    this.beatModel = '—',
+    this.chordModel = '—',
+    this.analysisData = const {},
     this.isSaved = false,
   });
 
@@ -87,6 +103,25 @@ class TrackResult {
       tabChordContent: json['tab_chord_content'] as String?,
       tabLyrics: json['tab_lyrics'] as String?,
       language: json['language'] as String?,
+      chordSegments: (json['chord_segments'] as List? ?? const [])
+          .whereType<Map>()
+          .map(
+            (item) => ChordSegment(
+              start: (item['start'] as num?)?.toDouble() ?? 0,
+              end: (item['end'] as num?)?.toDouble() ?? 0,
+              chord: item['chord']?.toString() ?? 'N',
+              confidence: (item['confidence'] as num?)?.toDouble() ?? 0,
+            ),
+          )
+          .toList(),
+      beats: _parseNumbers(json['beats']),
+      downbeats: _parseNumbers(json['downbeats']),
+      chordsByBeat: _parseChordNames(json['chords_by_beat']),
+      duration: (json['duration'] as num?)?.toDouble() ?? 0,
+      beatModel: json['beat_model'] as String? ?? '—',
+      chordModel: json['chord_model'] as String? ?? '—',
+      analysisData:
+          (json['analysis_data'] as Map?)?.cast<String, dynamic>() ?? const {},
       isSaved: json['is_saved'] as bool? ?? false,
     );
   }
@@ -130,7 +165,111 @@ class TrackResult {
       camelot: '—',
       timeSig: '—',
       timestamp: DateTime.now(),
+      chordSegments: _parseChordSegments(rawChords),
+      duration: (json['duration'] as num?)?.toDouble() ?? 0,
+      chordModel: json['model_name'] as String? ?? '—',
+      analysisData: Map<String, dynamic>.from(json),
     );
+  }
+
+  factory TrackResult.fromAudioAnalysisJson(Map<String, dynamic> json) {
+    final chordPayload =
+        (json['chord_recognition'] as Map?)?.cast<String, dynamic>() ?? json;
+    final beatPayload =
+        (json['beat_detection'] as Map?)?.cast<String, dynamic>() ?? json;
+    final rawChords = (chordPayload['chords'] as List?) ?? const [];
+    final segments = _parseChordSegments(rawChords);
+    final chordNames = <String>[];
+    for (final segment in segments) {
+      if (chordNames.isEmpty || chordNames.last != segment.chord) {
+        chordNames.add(segment.chord);
+      }
+    }
+    final rawAnalysis = Map<String, dynamic>.from(json);
+    return TrackResult(
+      title: 'Recorded analysis',
+      artist: 'SonicPulse AI',
+      album: chordPayload['model_name'] as String? ?? 'Chord recognition',
+      key: '—',
+      bpm:
+          (json['bpm'] as num?)?.round() ??
+          (beatPayload['bpm'] as num?)?.round() ??
+          0,
+      confidence: _averageConfidence(segments),
+      chords: chordNames,
+      mood: const [],
+      camelot: '—',
+      timeSig:
+          json['time_signature'] as String? ??
+          beatPayload['time_signature'] as String? ??
+          '—',
+      timestamp: DateTime.now(),
+      chordSegments: segments,
+      beats: _parseNumbers(json['beats'] ?? beatPayload['beats']),
+      downbeats: _parseNumbers(json['downbeats'] ?? beatPayload['downbeats']),
+      chordsByBeat: _parseChordNames(json['chords_by_beat']),
+      duration:
+          (json['duration'] as num?)?.toDouble() ??
+          _maxDuration(beatPayload, chordPayload),
+      beatModel:
+          json['beat_model'] as String? ??
+          beatPayload['model_name'] as String? ??
+          beatPayload['model_used'] as String? ??
+          '—',
+      chordModel:
+          json['chord_model'] as String? ??
+          chordPayload['model_name'] as String? ??
+          chordPayload['model_used'] as String? ??
+          '—',
+      analysisData: rawAnalysis,
+    );
+  }
+
+  static double _maxDuration(
+    Map<String, dynamic> beatPayload,
+    Map<String, dynamic> chordPayload,
+  ) {
+    final beatDuration = (beatPayload['duration'] as num?)?.toDouble() ?? 0;
+    final chordDuration = (chordPayload['duration'] as num?)?.toDouble() ?? 0;
+    return beatDuration > chordDuration ? beatDuration : chordDuration;
+  }
+
+  static List<ChordSegment> _parseChordSegments(List? rawChords) {
+    return (rawChords ?? const <dynamic>[]).whereType<Map>().map((raw) {
+      final value = Map<String, dynamic>.from(raw);
+      return ChordSegment(
+        start: (value['start'] as num?)?.toDouble() ?? 0,
+        end: (value['end'] as num?)?.toDouble() ?? 0,
+        chord: _formatChordName(value['chord']?.toString() ?? 'N'),
+        confidence: (value['confidence'] as num?)?.toDouble() ?? 0,
+      );
+    }).toList();
+  }
+
+  static List<double> _parseNumbers(dynamic values) {
+    if (values is! List) return const [];
+    return values.whereType<num>().map((value) => value.toDouble()).toList();
+  }
+
+  static List<String> _parseStrings(dynamic values) {
+    if (values is! List) return const [];
+    return values.map((value) => value?.toString() ?? '').toList();
+  }
+
+  static List<String> _parseChordNames(dynamic values) {
+    return _parseStrings(values).map((value) {
+      if (value == 'N') return '';
+      return _formatChordName(value);
+    }).toList();
+  }
+
+  static double _averageConfidence(List<ChordSegment> segments) {
+    if (segments.isEmpty) return 0;
+    return segments.fold<double>(
+          0,
+          (sum, segment) => sum + segment.confidence,
+        ) /
+        segments.length;
   }
 
   factory TrackResult.fromFindTabsJson(Map<String, dynamic> json) {
@@ -193,6 +332,16 @@ class TrackResult {
       'tab_lyrics': tabLyrics,
       'language': language,
       'is_saved': isSaved,
+      'chord_segments': chordSegments
+          .map((segment) => segment.toJson())
+          .toList(),
+      'beats': beats,
+      'downbeats': downbeats,
+      'chords_by_beat': chordsByBeat,
+      'duration': duration,
+      'beat_model': beatModel,
+      'chord_model': chordModel,
+      'analysis_data': analysisData,
     };
   }
 
@@ -222,6 +371,8 @@ class TrackResult {
   }
 
   TrackResult copyWith({
+    String? title,
+    String? artist,
     bool? isSaved,
     String? artworkUrl,
     String? audioUrl,
@@ -233,8 +384,8 @@ class TrackResult {
     String? language,
   }) {
     return TrackResult(
-      title: title,
-      artist: artist,
+      title: title ?? this.title,
+      artist: artist ?? this.artist,
       album: album,
       key: key,
       bpm: bpm,
@@ -252,9 +403,38 @@ class TrackResult {
       tabChordContent: tabChordContent ?? this.tabChordContent,
       tabLyrics: tabLyrics ?? this.tabLyrics,
       language: language ?? this.language,
+      chordSegments: chordSegments,
+      beats: beats,
+      downbeats: downbeats,
+      chordsByBeat: chordsByBeat,
+      duration: duration,
+      beatModel: beatModel,
+      chordModel: chordModel,
+      analysisData: analysisData,
       isSaved: isSaved ?? this.isSaved,
     );
   }
+}
+
+class ChordSegment {
+  const ChordSegment({
+    required this.start,
+    required this.end,
+    required this.chord,
+    required this.confidence,
+  });
+
+  final double start;
+  final double end;
+  final String chord;
+  final double confidence;
+
+  Map<String, dynamic> toJson() => {
+    'start': start,
+    'end': end,
+    'chord': chord,
+    'confidence': confidence,
+  };
 }
 
 // ── Mock data ────────────────────────────────────────────────────────────────

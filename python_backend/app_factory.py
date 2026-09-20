@@ -96,12 +96,16 @@ def register_blueprints(app: Flask, config) -> None:
         from blueprints.tabs import tabs_bp
         from blueprints.tabs.routes import register_socket_routes
         from blueprints.music_ai import music_ai_bp
+        from blueprints.analysis import analysis_bp
         from blueprints.audio_proxy import audio_proxy_bp
+        from blueprints.youtube import youtube_bp
 
         app.register_blueprint(docs_bp)
         app.register_blueprint(lyrics_bp)
         app.register_blueprint(tabs_bp)
         app.register_blueprint(music_ai_bp)
+        app.register_blueprint(analysis_bp)
+        app.register_blueprint(youtube_bp)
         if config.AUDIO_SERVICE_URL or config.CHORD_SERVICE_URL or config.BEAT_SERVICE_URL:
             app.register_blueprint(audio_proxy_bp)
         else:

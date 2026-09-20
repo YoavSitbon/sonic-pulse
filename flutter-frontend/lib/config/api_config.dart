@@ -24,6 +24,8 @@ class ApiConfig {
   // ── Endpoints ────────────────────────────────────────────────────
   static const String recognizeEndpoint = '/api/recognize-chords';
   static const String analyzeEndpoint = '/api/recognize-chords';
+  static const String analyzeAudioEndpoint = '/api/analyze-audio';
+  static const String youtubeSearchEndpoint = '/api/search-youtube';
 
   /// Receives a user-selected catalogue song as JSON: `{title, artist}`.
   static const String selectedSongEndpoint = '/api/analyze-song';
