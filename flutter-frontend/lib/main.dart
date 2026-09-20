@@ -4,9 +4,11 @@ import 'package:provider/provider.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'providers/app_state.dart';
+import 'services/http_overrides.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  configureHttpOverrides();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -39,4 +41,3 @@ class SonicPulseApp extends StatelessWidget {
     );
   }
 }
-

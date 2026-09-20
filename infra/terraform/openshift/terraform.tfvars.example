@@ -1,0 +1,14 @@
+namespace        = "sonic-pulse"
+api_image        = "image-registry.example/sonic-pulse/api:dev"
+chord_image      = "image-registry.example/sonic-pulse/chord:dev"
+beat_image       = "image-registry.example/sonic-pulse/beat:dev"
+qwen_image       = "vllm/vllm-openai:latest"
+qwen_model       = "Qwen/Qwen3-8B"
+qwen_served_model = "qwen3-8b"
+
+# Set this to the label used by your OpenShift GPU nodes, for example:
+# qwen_node_selector = { "nvidia.com/gpu.present" = "true" }
+qwen_node_selector = {}
+
+# Optional. If omitted, OpenShift assigns a route host.
+# api_route_host = "api.sonic-pulse.example.com"

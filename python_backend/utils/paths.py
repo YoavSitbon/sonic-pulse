@@ -42,18 +42,18 @@ BTC_PL_CHECKPOINT_PATH = BTC_PL_CHECKPOINTS_DIR / "btc_model_large_voca_pl.pt"
 TEMPLATES_DIR = BACKEND_DIR / "templates"
 
 
-def setup_model_paths():
+def setup_model_paths(role: str = 'monolith'):
     """
     Add model directories to Python path for imports.
 
     This function should be called during application initialization
     to ensure model modules can be imported.
     """
-    model_dirs = [
-        str(BEAT_TRANSFORMER_DIR),
-        str(CHORD_CNN_LSTM_DIR),
-        str(CHORDMINI_DIR)
-    ]
+    model_dirs = []
+    if role in ('audio', 'beat', 'monolith'):
+        model_dirs.append(str(BEAT_TRANSFORMER_DIR))
+    if role in ('audio', 'chord', 'monolith'):
+        model_dirs.extend((str(CHORD_CNN_LSTM_DIR), str(CHORDMINI_DIR)))
 
     for model_dir in model_dirs:
         if model_dir not in sys.path:

@@ -1,0 +1,14 @@
+namespace              = "ingress"
+manage_namespace       = false
+api_route_host         = "api-ingress.test.medone-1.med.one"
+kubeconfig_path        = "/home/yoavs/.kube/config"
+kubeconfig_context     = "ingress/api-medone-1-med-one:6443/ysitbon"
+api_image              = "registry.med.one/ingress-general/sonic-pulse/api:latest"
+chord_image            = "registry.med.one/ingress-general/sonic-pulse/chord:latest"
+beat_image             = "registry.med.one/ingress-general/sonic-pulse/beat:latest"
+api_replicas           = 1
+chord_replicas         = 1
+beat_replicas          = 1
+deploy_qwen            = false
+deploy_redis           = false
+image_pull_secret_name = "registry-med-one"

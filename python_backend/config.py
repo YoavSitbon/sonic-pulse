@@ -19,6 +19,13 @@ class Config:
     # Flask settings
     SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
+    # Runtime role. The API role delegates audio inference to the audio service;
+    # the audio role loads the heavy local models.
+    SERVICE_ROLE = os.environ.get('SERVICE_ROLE', 'monolith')
+    AUDIO_SERVICE_URL = os.environ.get('AUDIO_SERVICE_URL', '').rstrip('/')
+    CHORD_SERVICE_URL = os.environ.get('CHORD_SERVICE_URL', '').rstrip('/')
+    BEAT_SERVICE_URL = os.environ.get('BEAT_SERVICE_URL', '').rstrip('/')
+
     # Production mode detection
     PRODUCTION_MODE = (
         os.environ.get('FLASK_ENV', 'production') == 'production' or

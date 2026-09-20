@@ -1,0 +1,83 @@
+# Beat-analysis worker. It deliberately excludes chord-model code/checkpoints.
+FROM python:3.10-slim AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    ffmpeg \
+    git \
+    libsndfile1-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements-audio-common.txt requirements-beat.txt ./
+
+# madmom must be installed after Cython and before its runtime dependencies.
+RUN pip install --no-cache-dir --upgrade pip "setuptools==79.0.1" wheel \
+    && pip install --no-cache-dir "Cython>=0.29.0" numpy==1.26.4 \
+    && pip install --no-cache-dir git+https://github.com/CPJKU/madmom \
+    && pip install --no-cache-dir -r requirements-beat.txt \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.6.0 \
+    && pip install --no-cache-dir --no-deps spleeter==2.3.2
+
+FROM python:3.10-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ffmpeg \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# OpenShift runs containers with a random UID, so the image user's home and
+# the read-only virtualenv are not reliable locations for Numba's JIT cache.
+RUN mkdir -p /tmp/numba-cache && chmod 1777 /tmp/numba-cache
+
+WORKDIR /app
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY app.py app_factory.py config.py extensions.py error_handlers.py ./
+COPY config/ config/
+COPY compat/ compat/
+COPY utils/ utils/
+COPY blueprints/health/ blueprints/health/
+COPY blueprints/beats/ blueprints/beats/
+COPY services/audio/__init__.py services/audio/audio_utils.py services/audio/beat_detection_service.py services/audio/tempfiles.py services/audio/time_signature.py services/audio/
+COPY services/detectors/__init__.py services/detectors/beat_transformer_detector.py services/detectors/librosa_detector.py services/detectors/madmom_detector.py services/detectors/
+COPY models/__init__.py models/__init__.py
+COPY models/beat_transformer.py models/beat_transformer.py
+COPY models/Beat-Transformer/code/ models/Beat-Transformer/code/
+COPY models/Beat-Transformer/checkpoint/fold_4_trf_param.pt models/Beat-Transformer/checkpoint/fold_4_trf_param.pt
+
+RUN useradd --create-home --shell /bin/bash --uid 1001 app \
+    && chown -R app:app /app
+
+USER app
+
+# Beat Transformer always uses Spleeter's five-stem demixing path.
+RUN mkdir -p /home/app/.cache/spleeter/pretrained_models/5stems \
+    && cd /home/app/.cache/spleeter/pretrained_models/5stems \
+    && curl -fsSL -o 5stems.tar.gz https://github.com/deezer/spleeter/releases/download/v1.4.0/5stems.tar.gz \
+    && tar -xzf 5stems.tar.gz \
+    && rm 5stems.tar.gz \
+    && test -f checkpoint
+
+ENV FLASK_ENV=production \
+    FLASK_DEBUG=False \
+    SERVICE_ROLE=beat \
+    NUMBA_CACHE_DIR=/tmp/numba-cache \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -fsS http://localhost:8080/health || exit 1
+
+# Keep one model-owning process per pod, while a second thread keeps /health
+# responsive during a long-running analysis request.
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "2", "--timeout", "600", "--worker-class", "gthread", "--max-requests", "1000", "--max-requests-jitter", "100", "--preload", "app:app"]

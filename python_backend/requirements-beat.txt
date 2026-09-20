@@ -1,0 +1,12 @@
+-r requirements-audio-common.txt
+
+# Beat Transformer needs Spleeter/TensorFlow for its five-stem spectrogram
+# preprocessing, and madmom for DBN beat/downbeat tracking.
+tensorflow==2.15.1
+protobuf==3.20.3
+h5py==3.13.0
+norbert==0.2.1
+ffmpeg-python==0.2.0
+httpx==0.19.0
+h2==4.2.0
+Pillow==10.0.0
