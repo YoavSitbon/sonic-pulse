@@ -270,8 +270,8 @@ resource "kubernetes_deployment_v1" "chord" {
             period_seconds        = 30
           }
           resources {
-            requests = { cpu = "1500m", memory = "6Gi" }
-            limits   = { cpu = "6", memory = "6Gi" }
+            requests = { cpu = "2.5", memory = "6Gi" }
+            limits   = { cpu = "10", memory = "6Gi" }
           }
         }
       }
@@ -452,7 +452,7 @@ resource "kubernetes_manifest" "api_route" {
       name      = "api"
       namespace = var.namespace
       annotations = {
-        "haproxy.router.openshift.io/timeout" = "10m"
+        "haproxy.router.openshift.io/timeout" = "3m"
       }
     }
     spec = merge(

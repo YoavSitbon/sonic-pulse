@@ -76,5 +76,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -fsS http://localhost:8080/health || exit 1
 
-# One worker prevents duplicate in-memory model instances per pod.
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--timeout", "600", "--worker-class", "sync", "--max-requests", "1000", "--max-requests-jitter", "100", "--preload", "app:app"]
+# Keep one model-owning process per pod, while a second thread keeps /health
+# responsive during a long-running analysis request.
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "2", "--timeout", "600", "--worker-class", "gthread", "--max-requests", "1000", "--max-requests-jitter", "100", "--preload", "app:app"]
