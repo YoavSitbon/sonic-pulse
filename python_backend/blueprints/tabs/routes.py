@@ -110,6 +110,7 @@ def find_tabs():
         data = request.get_json(silent=True) or {}
         title = request.form.get("title") or data.get("title")
         artist = request.form.get("artist") or data.get("artist")
+        artist_id = request.form.get("artist_id") or data.get("artist_id")
         preferences = request.form.get("preferences") or data.get("preferences") or {}
         if isinstance(preferences, str):
             preferences = json.loads(preferences)
@@ -123,6 +124,7 @@ def find_tabs():
         result = TabFinderService().find_tabs(
             title=title,
             artist=artist,
+            artist_id=artist_id,
             audio_path=uploaded_path,
             preferences=preferences,
         )

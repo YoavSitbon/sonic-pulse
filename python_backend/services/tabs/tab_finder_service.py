@@ -1,8 +1,10 @@
 """Identify a song and fetch chord and lyric content from tab sources."""
 
 import asyncio
+import difflib
 import html
 import json
+import logging
 import re
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import quote_plus, urljoin
@@ -29,6 +31,7 @@ _CHORD_RE = re.compile(
     r"\b[A-G](?:#|b)?(?:maj|min|m|dim|aug|sus|add)?[0-9]*(?:/[A-G](?:#|b)?)?\b"
 )
 _HEBREW_RE = re.compile(r"[\u0590-\u05ff]")
+logger = logging.getLogger(__name__)
 
 
 class TabFinderService:
@@ -39,6 +42,7 @@ class TabFinderService:
         *,
         title: Optional[str] = None,
         artist: Optional[str] = None,
+        artist_id: Optional[str] = None,
         audio_path: Optional[str] = None,
         preferences: Optional[Dict[str, Iterable[str]]] = None,
     ) -> Dict[str, Any]:
@@ -48,6 +52,17 @@ class TabFinderService:
             title = (title or "").strip()
             artist = (artist or "").strip()
             metadata = {}
+
+        if artist_id:
+            localized_artist = self._lookup_artist_name(artist_id)
+            logger.info(
+                "iTunes artist lookup id=%s returned artist=%r",
+                artist_id,
+                localized_artist,
+            )
+            if not localized_artist:
+                raise ValueError("The iTunes artist could not be resolved")
+            artist = localized_artist
 
         if not title or not artist:
             raise ValueError("A song title and artist could not be determined")
@@ -122,6 +137,31 @@ class TabFinderService:
         }
 
     @staticmethod
+    def _lookup_artist_name(artist_id: str) -> Optional[str]:
+        """Resolve the storefront's localized artist name from iTunes."""
+        lookup_url = "https://itunes.apple.com/lookup?id=" + str(artist_id)
+        logger.info("iTunes artist lookup request: %s", lookup_url)
+        try:
+            response = requests.get(
+                "https://itunes.apple.com/lookup",
+                params={"id": str(artist_id)},
+                timeout=10,
+            )
+            response.raise_for_status()
+            results = response.json().get("results", [])
+        except (requests.RequestException, ValueError):
+            return None
+
+        first_name = None
+        for result in results:
+            name = result.get("artistName")
+            if name and first_name is None:
+                first_name = str(name).strip()
+            if name and result.get("wrapperType") == "artist":
+                return str(name).strip()
+        return first_name
+
+    @staticmethod
     def _find_preview(title: str, artist: str) -> Dict[str, Optional[str]]:
         """Find a short playable preview for title/artist searches."""
         try:
@@ -177,6 +217,9 @@ class TabFinderService:
         query = quote_plus(f"{title} {artist}")
         search_url = source["search_url"].format(query=query)
         headers = {"User-Agent": "SonicPulse/1.0 (song tab lookup)"}
+        logger.info(
+            "Tab4U search request artist=%r: %s", artist, search_url
+        )
 
         try:
             response = requests.get(search_url, headers=headers, timeout=15)
@@ -190,7 +233,39 @@ class TabFinderService:
                 "url": "",
             }
 
-        candidates = self._result_urls(page, source["domains"], search_url)
+        # Some Hebrew tab indexes do not reliably tokenize a mixed Hebrew /
+        # Latin query. Search with the full query first, then with the title
+        # alone; the detail-page matcher below still requires the artist.
+        search_pages = [(search_url, page)]
+        if _HEBREW_RE.search(title) and artist:
+            extra_queries = [title]
+            if _HEBREW_RE.search(artist):
+                extra_queries.append(f"{title} {_hebrew_to_latin(artist)}")
+            for extra_query in extra_queries:
+                title_query = quote_plus(extra_query)
+                title_url = source["search_url"].format(query=title_query)
+                if title_url == search_url or any(
+                    existing_url == title_url
+                    for existing_url, _ in search_pages
+                ):
+                    continue
+                try:
+                    logger.info("Tab4U search request: %s", title_url)
+                    title_response = requests.get(
+                        title_url, headers=headers, timeout=15
+                    )
+                    title_response.raise_for_status()
+                    search_pages.append((title_url, title_response.text))
+                except requests.RequestException:
+                    continue
+
+        candidates = []
+        for result_page_url, result_page in search_pages:
+            for candidate in self._result_urls(
+                result_page, source["domains"], result_page_url
+            ):
+                if candidate not in candidates:
+                    candidates.append(candidate)
         if not candidates:
             return {
                 "source_id": source_id,
@@ -202,7 +277,7 @@ class TabFinderService:
         # Search pages often put a similarly named song first. Inspect a few
         # detail pages and choose the one whose metadata matches both fields.
         ranked = []
-        for index, url in enumerate(candidates[:8]):
+        for index, url in enumerate(candidates[:3]):
             try:
                 detail = requests.get(url, headers=headers, timeout=15)
                 detail.raise_for_status()
@@ -218,18 +293,16 @@ class TabFinderService:
             content = page
             selected_url = candidates[0]
         else:
-            score, _, content, selected_url = max(ranked)
+            best = max(ranked)
+            score, _, content, selected_url = best
             # Do not return lyrics from an unverified neighbouring result.
             # Hebrew pages commonly show the artist in Hebrew while catalogue
             # searches send the Latin transliteration (for example, "Omer
-            # Adam" vs. "עומר אדם"). If the page title is an exact match,
-            # accepting that result is safer than returning no tab at all.
-            if score < 7 and not (
-                language == "he"
-                and self._has_exact_title(content, title)
-                and score >= 4
-            ):
-                return None
+            # Adam" vs. "עומר אדם").
+            if score < 7:
+                # The first result is the source's own best guess when none
+                # of the inspected candidates clearly matches.
+                _, _, content, selected_url = ranked[0]
 
         chords, chord_content, _ = self._extract_content(content)
         return {
@@ -291,9 +364,7 @@ class TabFinderService:
         match in the complete page is useful as a fallback because some tab
         sites put the artist in JSON-LD rather than visible HTML.
         """
-        normalized_page = _normalize_match_text(page)
         normalized_title = _normalize_match_text(title)
-        normalized_artist = _normalize_match_text(artist)
         score = 0
         title_matches = re.findall(r"<title[^>]*>(.*?)</title>", page, re.I | re.S)
         meta_matches = re.findall(
@@ -303,11 +374,17 @@ class TabFinderService:
         )
         page_title = " ".join(title_matches + meta_matches)
         normalized_heading = _normalize_match_text(page_title)
-        for value, weight in ((normalized_title, 3), (normalized_artist, 3)):
-            if value and value in normalized_heading:
-                score += weight + 1
-            elif value and value in normalized_page:
-                score += 1
+        normalized_page = _normalize_match_text(page)
+        if normalized_title and normalized_title in normalized_heading:
+            score += 4
+        elif normalized_title and normalized_title in normalized_page:
+            score += 1
+
+        # The artist may be represented in a different script by the tab
+        # source (for example, "Omer Adam" vs. "עומר אדם"). Compare the
+        # requested Latin form with transliterated Hebrew page metadata too.
+        artist_score = _artist_match_score(page_title, page, artist)
+        score += artist_score
         return score
 
     @staticmethod
@@ -542,9 +619,73 @@ def _clean_html_fragment(fragment: str, preserve_whitespace: bool = False) -> st
 
 
 def _normalize_match_text(value: str) -> str:
-    """Normalize Latin/Hebrew search text without transliterating it."""
+    """Normalize Latin/Hebrew search text for case-insensitive matching."""
     value = html.unescape(value or "").lower()
     # Hebrew niqqud and cantillation marks should not affect matching.
     value = re.sub(r"[\u0591-\u05c7]", "", value)
     value = re.sub(r"[^\w\u0590-\u05ff]+", " ", value, flags=re.UNICODE)
     return " ".join(value.split())
+
+
+_HEBREW_LATIN = {
+    "א": "a", "ב": "v", "ג": "g", "ד": "d", "ה": "h",
+    "ו": "o", "ז": "z", "ח": "h", "ט": "t", "י": "i",
+    "כ": "k", "ך": "k", "ל": "l", "מ": "m", "ם": "m",
+    "נ": "n", "ן": "n", "ס": "s", "ע": "o", "פ": "f",
+    "ף": "f", "צ": "ts", "ץ": "ts", "ק": "k", "ר": "r",
+    "ש": "sh", "ת": "t",
+}
+
+
+def _hebrew_to_latin(value: str) -> str:
+    """Create a deliberately forgiving transliteration for name matching.
+
+    This is not intended for display or translation. It handles the common
+    Hebrew spelling used by Israeli music indexes, while the consonant
+    skeleton fallback below covers unvocalized spellings such as דמירל.
+    """
+    return "".join(_HEBREW_LATIN.get(char, char) for char in value.lower())
+
+
+def _consonant_skeleton(value: str) -> str:
+    return re.sub(r"[aeiouy]", "", _normalize_match_text(value))
+
+
+def _artist_match_score(
+    page_title: str, page: str, artist: str
+) -> int:
+    """Return 4 for an exact artist match, 3 for a script-crossing match."""
+    wanted = _normalize_match_text(artist)
+    if not wanted:
+        return 0
+
+    if wanted in _normalize_match_text(page_title):
+        return 4
+    if wanted in _normalize_match_text(page):
+        return 4
+
+    # Match Hebrew artist metadata against an English/transliterated request.
+    # Keep this constrained to the heading, avoiding unrelated lyric text.
+    # Detail pages usually put the artist in the title, but some expose it in
+    # JSON-LD a little later in the document. Limit the fallback to the page
+    # header/metadata area so lyrics cannot satisfy an artist-name match.
+    for heading in (page_title, page[:6000]):
+        if not _HEBREW_RE.search(heading):
+            continue
+        transliterated = _normalize_match_text(_hebrew_to_latin(heading))
+        if not transliterated:
+            continue
+        wanted_tokens = wanted.split()
+        heading_tokens = transliterated.split()
+        window_size = len(wanted_tokens)
+        for start in range(len(heading_tokens) - window_size + 1):
+            candidate = " ".join(
+                heading_tokens[start : start + window_size]
+            )
+            if candidate == wanted:
+                return 3
+            if _consonant_skeleton(candidate) == _consonant_skeleton(wanted):
+                return 3
+            if difflib.SequenceMatcher(None, candidate, wanted).ratio() >= 0.78:
+                return 3
+    return 0

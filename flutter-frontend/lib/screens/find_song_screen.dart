@@ -340,6 +340,7 @@ class _FindSongScreenState extends State<FindSongScreen>
       final result = await _recognizer.findTabsBySong(
         title: song.title,
         artist: song.artist,
+        artistId: song.artistId,
         preferences: _tabPreferences,
       );
       if (!mounted) return;

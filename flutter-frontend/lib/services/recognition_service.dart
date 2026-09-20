@@ -65,6 +65,7 @@ class RecognitionService {
   Future<TrackResult> findTabsBySong({
     required String title,
     required String artist,
+    int? artistId,
     Map<String, List<String>> preferences = const {},
   }) async {
     final request = http.MultipartRequest(
@@ -73,6 +74,7 @@ class RecognitionService {
     );
     request.fields['title'] = title;
     request.fields['artist'] = artist;
+    if (artistId != null) request.fields['artist_id'] = artistId.toString();
     request.fields['preferences'] = jsonEncode(preferences);
     return _sendFindTabs(request);
   }
