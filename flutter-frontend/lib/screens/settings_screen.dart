@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../services/storage_service.dart';
 import '../config/api_config.dart';
 import '../theme/app_colors.dart';
+import '../services/music_ai_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -18,6 +19,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _autoShazam = false;
   late final TextEditingController _apiUrlController;
   bool _savingApiUrl = false;
+  String _musicAiModel = MusicAiService.defaultModel;
 
   static const _sources = {
     'en': [('ultimate_guitar', 'Ultimate Guitar')],
@@ -40,6 +42,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _load() async {
     final saved = await _storage.loadTabPreferences();
     final autoShazam = await _storage.loadAutoShazam();
+    final musicAiModel = await _storage.loadMusicAiModel();
     if (!mounted) return;
     setState(() {
       _selected = {
@@ -47,6 +50,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'he': saved['he']!.isEmpty ? ['tab4u'] : saved['he']!,
       };
       _autoShazam = autoShazam;
+      _musicAiModel = MusicAiService.supportedModels.contains(musicAiModel)
+          ? musicAiModel!
+          : MusicAiService.defaultModel;
       _loaded = true;
     });
   }
@@ -70,9 +76,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _saveApiUrl() async {
-    final value = _apiUrlController.text.trim().replaceFirst(RegExp(r'/+$'), '');
+    final value = _apiUrlController.text.trim().replaceFirst(
+      RegExp(r'/+$'),
+      '',
+    );
     final uri = Uri.tryParse(value);
-    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https') || uri.host.isEmpty) {
+    if (uri == null ||
+        (uri.scheme != 'http' && uri.scheme != 'https') ||
+        uri.host.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Enter a valid URL, including the port.')),
       );
@@ -83,9 +94,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _storage.saveApiBaseUrl(ApiConfig.baseUrl);
     if (!mounted) return;
     setState(() => _savingApiUrl = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Backend URL saved.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Backend URL saved.')));
   }
 
   @override
@@ -157,6 +168,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onPressed: _savingApiUrl ? null : _saveApiUrl,
                     child: Text(_savingApiUrl ? 'SAVING…' : 'SAVE BACKEND URL'),
                   ),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'AI COACH',
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: _musicAiModel,
+                  decoration: const InputDecoration(
+                    labelText: 'Gemini model',
+                    prefixIcon: Icon(Icons.auto_awesome_rounded),
+                  ),
+                  items: MusicAiService.supportedModels
+                      .map(
+                        (model) =>
+                            DropdownMenuItem(value: model, child: Text(model)),
+                      )
+                      .toList(),
+                  onChanged: (value) async {
+                    if (value == null) return;
+                    setState(() => _musicAiModel = value);
+                    await _storage.saveMusicAiModel(value);
+                  },
                 ),
                 const SizedBox(height: 24),
                 Text(

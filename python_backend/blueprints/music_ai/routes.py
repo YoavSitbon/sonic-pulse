@@ -14,6 +14,7 @@ def song_ai_chat():
     question = data.get("question")
     song = data.get("song")
     conversation = data.get("conversation", [])
+    model = data.get("model")
 
     if not isinstance(question, str) or not question.strip():
         return jsonify({"success": False, "error": "A question is required."}), 400
@@ -21,6 +22,10 @@ def song_ai_chat():
         return jsonify({"success": False, "error": "Question is too long."}), 400
     if not isinstance(song, dict):
         return jsonify({"success": False, "error": "Song context is required."}), 400
+    if model is not None and (
+        not isinstance(model, str) or not model.startswith("gemini-")
+    ):
+        return jsonify({"success": False, "error": "Only Gemini models are supported."}), 400
     if not isinstance(conversation, list) or len(conversation) > 20:
         return jsonify({"success": False, "error": "Conversation is too long."}), 400
 
@@ -40,7 +45,7 @@ def song_ai_chat():
     if service is None or not service.available:
         return jsonify({
             "success": False,
-            "error": "Music AI is not configured. Set MUSIC_AI_BASE_URL and MUSIC_AI_MODEL, then start the local model service.",
+            "error": "Gemini is not configured. Set GEMINI_API_KEY on the backend.",
         }), 503
 
     try:
@@ -48,6 +53,7 @@ def song_ai_chat():
             question=question.strip(),
             song=song,
             conversation=cleaned_conversation,
+            model=model,
         )
         return jsonify({"success": True, "answer": answer})
     except Exception as exc:

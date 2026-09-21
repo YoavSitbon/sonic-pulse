@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/track_result.dart';
 import '../services/storage_service.dart';
@@ -34,6 +35,11 @@ class AppState extends ChangeNotifier {
   Future<void> _init() async {
     _identifiedTracks = await _storage.loadIdentifiedTracks();
     _savedTracks = await _storage.loadSavedTracks();
+    for (final track in _identifiedTracks) {
+      track.isSaved = _savedTracks.any(
+        (saved) => saved.title == track.title && saved.artist == track.artist,
+      );
+    }
     _scanCount = await _storage.loadScanCount();
     _isLoaded = true;
     notifyListeners();
@@ -55,12 +61,14 @@ class AppState extends ChangeNotifier {
 
   /// Toggles the saved/bookmark state for a track.
   Future<void> toggleSave(TrackResult track) async {
-    final isCurrentlySaved = _savedTracks
-        .any((t) => t.title == track.title && t.artist == track.artist);
+    final isCurrentlySaved = _savedTracks.any(
+      (t) => t.title == track.title && t.artist == track.artist,
+    );
 
     if (isCurrentlySaved) {
       _savedTracks.removeWhere(
-          (t) => t.title == track.title && t.artist == track.artist);
+        (t) => t.title == track.title && t.artist == track.artist,
+      );
       await _storage.removeSavedTrack(track);
 
       // also update identified list flag
@@ -81,9 +89,45 @@ class AppState extends ChangeNotifier {
         }
       }
     }
+    await _storage.replaceIdentifiedTracks(_identifiedTracks);
     notifyListeners();
   }
 
-  bool isSaved(TrackResult track) =>
-      _savedTracks.any((t) => t.title == track.title && t.artist == track.artist);
+  Future<void> removeIdentification(TrackResult track) async {
+    _identifiedTracks.removeWhere(
+      (item) => item.title == track.title && item.artist == track.artist,
+    );
+    await _storage.removeIdentifiedTrack(track);
+    await _deleteUnreferencedRecording(track);
+    notifyListeners();
+  }
+
+  Future<void> clearHistory() async {
+    final history = List<TrackResult>.from(_identifiedTracks);
+    _identifiedTracks.clear();
+    await _storage.replaceIdentifiedTracks(const []);
+    for (final track in history) {
+      await _deleteUnreferencedRecording(track);
+    }
+    notifyListeners();
+  }
+
+  Future<void> _deleteUnreferencedRecording(TrackResult track) async {
+    final path = track.localAudioPath;
+    if (path == null || path.isEmpty) return;
+    final isSaved = _savedTracks.any(
+      (saved) => saved.title == track.title && saved.artist == track.artist,
+    );
+    final isStillInHistory = _identifiedTracks.any(
+      (item) => item.localAudioPath == path,
+    );
+    if (!isSaved && !isStillInHistory) {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    }
+  }
+
+  bool isSaved(TrackResult track) => _savedTracks.any(
+    (t) => t.title == track.title && t.artist == track.artist,
+  );
 }

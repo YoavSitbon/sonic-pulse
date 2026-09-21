@@ -31,6 +31,7 @@ class TrackResult {
   final DateTime timestamp;
   final String? artworkUrl;
   final String? audioUrl;
+  final String? localAudioPath;
   final String? youtubeUrl;
   final String? tabSource;
   final String? tabSourceId;
@@ -62,6 +63,7 @@ class TrackResult {
     required this.timestamp,
     this.artworkUrl,
     this.audioUrl,
+    this.localAudioPath,
     this.youtubeUrl,
     this.tabSource,
     this.tabSourceId,
@@ -99,6 +101,7 @@ class TrackResult {
           : DateTime.now(),
       artworkUrl: json['artwork_url'] as String?,
       audioUrl: json['audio_url'] as String?,
+      localAudioPath: json['local_audio_path'] as String?,
       youtubeUrl: json['youtube_url'] as String?,
       tabSource: json['tab_source'] as String?,
       tabSourceId: json['tab_source_id'] as String?,
@@ -193,10 +196,7 @@ class TrackResult {
       title: 'Recorded analysis',
       artist: 'SonicPulse AI',
       album: chordPayload['model_name'] as String? ?? 'Chord recognition',
-      key:
-          json['key'] as String? ??
-          chordPayload['key'] as String? ??
-          '—',
+      key: json['key'] as String? ?? chordPayload['key'] as String? ?? '—',
       bpm:
           (json['bpm'] as num?)?.round() ??
           (beatPayload['bpm'] as num?)?.round() ??
@@ -290,7 +290,7 @@ class TrackResult {
       title: json['title'] as String? ?? 'Unknown song',
       artist: json['artist'] as String? ?? 'Unknown artist',
       album: selected['source'] as String? ?? 'Guitar tabs',
-      key: '—',
+      key: json['key'] as String? ?? '—',
       bpm: 0,
       confidence: 1,
       chords: rawChords.map((chord) => chord.toString()).toList(),
@@ -300,12 +300,15 @@ class TrackResult {
       timestamp: DateTime.now(),
       artworkUrl: json['artwork_url'] as String?,
       audioUrl: json['audio_url'] as String?,
+      localAudioPath: json['local_audio_path'] as String?,
       tabSource: selected['source'] as String?,
       tabSourceId: selected['source_id'] as String?,
       tabUrl: selected['url'] as String?,
       tabChordContent: selected['chord_content'] as String?,
       tabLyrics: selected['lyrics'] as String?,
       language: json['language'] as String?,
+      analysisData:
+          (json['key_analysis'] as Map?)?.cast<String, dynamic>() ?? const {},
     );
   }
 
@@ -332,6 +335,7 @@ class TrackResult {
       'timestamp': timestamp.toIso8601String(),
       'artwork_url': artworkUrl,
       'audio_url': audioUrl,
+      'local_audio_path': localAudioPath,
       'youtube_url': youtubeUrl,
       'tab_source': tabSource,
       'tab_source_id': tabSourceId,
@@ -375,7 +379,12 @@ class TrackResult {
   String get timeIdentified {
     final hour = timestamp.hour.toString().padLeft(2, '0');
     final minute = timestamp.minute.toString().padLeft(2, '0');
-    return 'Identified at $hour:$minute';
+    final isIdentified =
+        tabSource != null ||
+        tabSourceId != null ||
+        tabUrl != null ||
+        tabChordContent != null;
+    return '${isIdentified ? 'Identified' : 'Analyzed'} at $hour:$minute';
   }
 
   TrackResult copyWith({
@@ -384,6 +393,7 @@ class TrackResult {
     bool? isSaved,
     String? artworkUrl,
     String? audioUrl,
+    String? localAudioPath,
     String? youtubeUrl,
     String? tabSource,
     String? tabSourceId,
@@ -406,6 +416,7 @@ class TrackResult {
       timestamp: timestamp,
       artworkUrl: artworkUrl ?? this.artworkUrl,
       audioUrl: audioUrl ?? this.audioUrl,
+      localAudioPath: localAudioPath ?? this.localAudioPath,
       youtubeUrl: youtubeUrl ?? this.youtubeUrl,
       tabSource: tabSource ?? this.tabSource,
       tabSourceId: tabSourceId ?? this.tabSourceId,

@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import quote_plus, urljoin
 
 import requests
+from services.music_theory_engine import MusicTheoryEngine
 
 
 TAB_SOURCES: Dict[str, Dict[str, Any]] = {
@@ -32,6 +33,7 @@ _CHORD_RE = re.compile(
 )
 _HEBREW_RE = re.compile(r"[\u0590-\u05ff]")
 logger = logging.getLogger(__name__)
+theory_engine = MusicTheoryEngine()
 
 
 class TabFinderService:
@@ -78,6 +80,15 @@ class TabFinderService:
             self._lookup_source(source_id, title, artist, language)
             for source_id in selected
         ]
+        selected_tab = next(
+            (tab for tab in tabs if tab and tab.get("chords")),
+            None,
+        )
+        theory = theory_engine.build({
+            "title": title,
+            "artist": artist,
+            "chords": (selected_tab or {}).get("chords", []),
+        })
 
         return {
             "success": True,
@@ -86,6 +97,13 @@ class TabFinderService:
             "language": language,
             "audio_url": metadata.get("audio_url"),
             "artwork_url": metadata.get("artwork_url"),
+            "key": theory.get("likely_key") or "—",
+            "key_confidence": theory.get("key_confidence", 0),
+            "key_analysis": {
+                "normalized_chords": theory.get("normalized_chords", []),
+                "roman_numerals": theory.get("roman_numerals", []),
+                "unique_chords": theory.get("unique_chords", []),
+            },
             "tabs": [
                 tab
                 for tab in tabs

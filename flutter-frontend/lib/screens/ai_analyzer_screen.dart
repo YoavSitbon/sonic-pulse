@@ -9,10 +9,13 @@ import 'package:provider/provider.dart';
 import '../theme/app_colors.dart';
 import '../widgets/bottom_nav_bar.dart';
 import '../widgets/wave_bars.dart';
+import '../widgets/song_play_bar.dart';
 import '../models/track_result.dart';
+import '../models/ai_chat_message.dart';
 import '../models/youtube_video.dart';
 import '../services/audio_recorder_service.dart';
 import '../services/recognition_service.dart';
+import '../services/storage_service.dart';
 import '../providers/app_state.dart';
 import 'home_screen.dart';
 import 'find_song_screen.dart';
@@ -44,14 +47,14 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
   Timer? _recordingTimer;
   StreamSubscription? _amplitudeSubscription;
   double _amplitudeLevel = 0.05;
+  int _recordingGeneration = 0;
 
   final _recorder = AudioRecorderService();
   final _recognizer = RecognitionService();
   final AudioPlayer _audioPlayer = AudioPlayer();
-  StreamSubscription<PlayerState>? _playerStateSubscription;
   String? _audioPath;
   String? _audioUrl;
-  bool _isPlaying = false;
+  List<AiChatMessage> _aiConversation = [];
 
   // Outer pulse ring
   late AnimationController _outerPulse;
@@ -71,6 +74,7 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
       _state = _AnalyzeState.result;
       _audioUrl = widget.initialResult!.audioUrl;
       unawaited(_restoreInitialAudio());
+      unawaited(_loadAiConversation(widget.initialResult!));
     }
 
     _outerPulse = AnimationController(
@@ -101,10 +105,6 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
       begin: 0.35,
       end: 0.8,
     ).animate(CurvedAnimation(parent: _innerPulse, curve: Curves.easeInOut));
-
-    _playerStateSubscription = _audioPlayer.playerStateStream.listen((state) {
-      if (mounted) setState(() => _isPlaying = state.playing);
-    });
   }
 
   @override
@@ -113,10 +113,9 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
     _innerPulse.dispose();
     _recordingTimer?.cancel();
     _amplitudeSubscription?.cancel();
-    _playerStateSubscription?.cancel();
     _audioPlayer.dispose();
     final audioPath = _audioPath;
-    if (audioPath != null) unawaited(_recognizer.cleanupFile(audioPath));
+    if (audioPath != null) unawaited(_cleanupTemporaryAudio(audioPath));
     _recorder.dispose();
     super.dispose();
   }
@@ -124,12 +123,14 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
   // ── Flow ─────────────────────────────────────────────────────────
 
   Future<void> _startAnalysis() async {
+    final generation = ++_recordingGeneration;
     _recordingTimer?.cancel();
     _recordingTimer = null;
     await _amplitudeSubscription?.cancel();
     _amplitudeSubscription = null;
 
     final hasPermission = await _recorder.requestPermission();
+    if (!mounted || generation != _recordingGeneration) return;
     if (!hasPermission) {
       _showError('Microphone permission denied. Please enable it in Settings.');
       return;
@@ -138,17 +139,32 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
     setState(() {
       _state = _AnalyzeState.recording;
       _recordingSeconds = 0;
+      _amplitudeLevel = 0.05;
       _errorMessage = null;
     });
+    _outerPulse
+      ..reset()
+      ..repeat();
+    _innerPulse
+      ..reset()
+      ..repeat();
 
     final started = await _recorder.startRecording();
+    if (!mounted || generation != _recordingGeneration) {
+      await _recorder.cancelRecording();
+      return;
+    }
     if (!started) {
       _showError('Could not start recording. Please try again.');
       return;
     }
 
     _amplitudeSubscription = _recorder.amplitudeStream.listen((amplitude) {
-      if (!mounted || _state != _AnalyzeState.recording) return;
+      if (!mounted ||
+          generation != _recordingGeneration ||
+          _state != _AnalyzeState.recording) {
+        return;
+      }
       final db = amplitude.current;
       final level = db.isFinite && db > -55
           ? ((db + 55) / 35).clamp(0.0, 1.0).toDouble()
@@ -161,7 +177,10 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
         t.cancel();
         return;
       }
-      setState(() => _recordingSeconds++);
+      if (_state == _AnalyzeState.recording &&
+          generation == _recordingGeneration) {
+        setState(() => _recordingSeconds++);
+      }
     });
   }
 
@@ -176,22 +195,52 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
 
     try {
       final result = await _recognizer.analyzeSong(audioPath ?? '');
+      final savedAudioPath = audioPath == null
+          ? null
+          : await _saveRecording(audioPath);
+      final resultWithAudio = result.copyWith(localAudioPath: savedAudioPath);
 
       if (!mounted) return;
-      await context.read<AppState>().addIdentification(result);
-      _audioPath = audioPath;
+      await context.read<AppState>().addIdentification(resultWithAudio);
+      _audioPath = savedAudioPath;
       _audioUrl = null;
-      if (audioPath != null) {
-        await _audioPlayer.setFilePath(audioPath);
+      if (savedAudioPath != null && audioPath != null) {
+        await _recognizer.cleanupFile(audioPath);
+      }
+      if (savedAudioPath != null) {
+        await _audioPlayer.setFilePath(savedAudioPath);
       }
 
       setState(() {
-        _result = result;
+        _result = resultWithAudio;
+        _aiConversation = [];
         _state = _AnalyzeState.result;
       });
+      unawaited(_loadAiConversation(resultWithAudio));
     } catch (e) {
       await _recognizer.cleanupFile(audioPath);
       _showError(e.toString().replaceAll('RecognitionException: ', ''));
+    }
+  }
+
+  Future<void> _openAiChat() async {
+    final result = _result;
+    if (result == null || !mounted) return;
+    final conversation = await showSongCoach(
+      context,
+      result,
+      initialConversation: _aiConversation,
+    );
+    if (conversation != null && mounted) {
+      setState(() => _aiConversation = conversation);
+      unawaited(StorageService().saveMusicAiConversation(result, conversation));
+    }
+  }
+
+  Future<void> _loadAiConversation(TrackResult song) async {
+    final conversation = await StorageService().loadMusicAiConversation(song);
+    if (mounted && identical(_result, song)) {
+      setState(() => _aiConversation = conversation);
     }
   }
 
@@ -203,17 +252,18 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
     });
   }
 
-  void _reset() {
+  Future<void> _reset() async {
+    _recordingGeneration++;
     _recordingTimer?.cancel();
     _recordingTimer = null;
-    _amplitudeSubscription?.cancel();
+    await _amplitudeSubscription?.cancel();
     _amplitudeSubscription = null;
-    _recorder.cancelRecording();
+    await _recorder.cancelRecording();
     final audioPath = _audioPath;
     _audioPath = null;
     _audioUrl = null;
     unawaited(_audioPlayer.stop());
-    if (audioPath != null) unawaited(_recognizer.cleanupFile(audioPath));
+    if (audioPath != null) unawaited(_cleanupTemporaryAudio(audioPath));
     _amplitudeLevel = 0.05;
     setState(() {
       _state = _AnalyzeState.idle;
@@ -222,28 +272,21 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
     });
   }
 
-  Future<void> _togglePlayback() async {
-    if (_audioPath == null && _audioUrl == null) return;
-    try {
-      if (_audioPlayer.playing) {
-        await _audioPlayer.pause();
-      } else {
-        if (_audioPlayer.processingState == ProcessingState.completed) {
-          await _audioPlayer.seek(Duration.zero);
-        }
-        await _audioPlayer.play();
-      }
-    } catch (e) {
-      _showError('Could not play the recording: $e');
-    }
-  }
-
   Future<void> _restoreInitialAudio() async {
     final result = widget.initialResult;
     if (result == null) return;
-    final youtubeUrl = result.youtubeUrl ??
-        result.analysisData['youtube_url']?.toString();
+    final youtubeUrl =
+        result.youtubeUrl ?? result.analysisData['youtube_url']?.toString();
     try {
+      final localAudioPath = result.localAudioPath;
+      if (localAudioPath != null && localAudioPath.isNotEmpty) {
+        if (await File(localAudioPath).exists()) {
+          await _audioPlayer.setFilePath(localAudioPath);
+          if (!mounted) return;
+          setState(() => _audioPath = localAudioPath);
+          return;
+        }
+      }
       String? audioUrl = result.audioUrl;
       if (youtubeUrl != null && youtubeUrl.isNotEmpty) {
         // YouTube stream URLs expire, so resolve a fresh one every time a
@@ -261,6 +304,28 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
       // Keep the analysis view usable even if YouTube cannot refresh its
       // temporary stream URL right now.
     }
+  }
+
+  Future<String?> _saveRecording(String sourcePath) async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final recordingsDirectory = Directory(
+        '${directory.path}/sonic_pulse_recordings',
+      );
+      await recordingsDirectory.create(recursive: true);
+      final destination = File(
+        '${recordingsDirectory.path}/recording_${DateTime.now().millisecondsSinceEpoch}.wav',
+      );
+      await File(sourcePath).copy(destination.path);
+      return destination.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _cleanupTemporaryAudio(String path) async {
+    if (path.contains('/sonic_pulse_recordings/')) return;
+    await _recognizer.cleanupFile(path);
   }
 
   Future<void> _runTestAudio() async {
@@ -283,7 +348,7 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
       _audioPath = null;
       _audioUrl = null;
       if (previousPath != null) {
-        unawaited(_recognizer.cleanupFile(previousPath));
+        unawaited(_cleanupTemporaryAudio(previousPath));
       }
       if (!mounted) {
         await _recognizer.cleanupFile(testAudioPath);
@@ -328,7 +393,7 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
       _audioPath = null;
       _audioUrl = result.audioUrl;
       if (previousPath != null) {
-        unawaited(_recognizer.cleanupFile(previousPath));
+        unawaited(_cleanupTemporaryAudio(previousPath));
       }
       if (_audioUrl != null && _audioUrl!.isNotEmpty) {
         await _audioPlayer.setUrl(_audioUrl!);
@@ -355,10 +420,8 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
         mainAxisSize: MainAxisSize.min,
         children: [
           if ((_audioPath != null || _audioUrl != null) && _result != null)
-            _AnalysisMiniPlayer(
+            SongPlayBar(
               player: _audioPlayer,
-              isPlaying: _isPlaying,
-              onPlayPause: _togglePlayback,
               title: _result!.title,
               artworkUrl: _result!.artworkUrl,
             ),
@@ -401,7 +464,7 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
           innerOpacity: _innerOpacity,
           amplitudeLevel: _amplitudeLevel,
           onStop: _finishAndSend,
-          onCancel: _reset,
+          onCancel: () => unawaited(_reset()),
         );
       case _AnalyzeState.analyzing:
         return _AnalyzingView(key: const ValueKey('analyzing'));
@@ -410,14 +473,15 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
           key: const ValueKey('results'),
           result: _result!,
           player: _audioPlayer,
-          onReset: _reset,
+          onReset: () => unawaited(_reset()),
           onToggleSave: () => context.read<AppState>().toggleSave(_result!),
+          onAskAi: _openAiChat,
         );
       case _AnalyzeState.error:
         return _ErrorView(
           key: const ValueKey('error'),
           message: _errorMessage ?? 'Unknown error',
-          onRetry: _reset,
+          onRetry: () => unawaited(_reset()),
         );
       case _AnalyzeState.idle:
         return _InitialView(
@@ -1131,6 +1195,7 @@ class _ResultsView extends StatelessWidget {
   final AudioPlayer player;
   final VoidCallback onReset;
   final VoidCallback onToggleSave;
+  final VoidCallback onAskAi;
 
   const _ResultsView({
     super.key,
@@ -1138,6 +1203,7 @@ class _ResultsView extends StatelessWidget {
     required this.player,
     required this.onReset,
     required this.onToggleSave,
+    required this.onAskAi,
   });
 
   @override
@@ -1220,25 +1286,22 @@ class _ResultsView extends StatelessWidget {
                             value: result.bpm > 0 ? '${result.bpm}' : '—',
                           ),
                           const SizedBox(width: 12),
-                          _TrackMetric(
-                            label: 'TIME',
-                            value: result.timeSig,
-                          ),
+                          _TrackMetric(label: 'TIME', value: result.timeSig),
                           const SizedBox(width: 12),
                           GestureDetector(
                             onTap: result.key == '—'
                                 ? null
                                 : () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => KeyDetailsScreen(
-                                          keyName: result.key,
-                                          songTitle: result.title,
-                                          artworkUrl: result.artworkUrl,
-                                          player: player,
-                                        ),
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => KeyDetailsScreen(
+                                        keyName: result.key,
+                                        songTitle: result.title,
+                                        artworkUrl: result.artworkUrl,
+                                        player: player,
                                       ),
                                     ),
+                                  ),
                             child: _TrackMetric(
                               label: 'KEY',
                               value: result.key,
@@ -1287,9 +1350,7 @@ class _ResultsView extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Ask AI is coming soon.')),
-              ),
+              onPressed: onAskAi,
               icon: const Icon(Icons.auto_awesome_rounded, size: 19),
               label: Text(
                 'ASK AI ABOUT THIS SONG',
@@ -1715,10 +1776,8 @@ class _ChordProgressionCard extends StatelessWidget {
                 visualDensity: VisualDensity.compact,
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) => _FullScreenChordGrid(
-                      result: result,
-                      player: player,
-                    ),
+                    builder: (_) =>
+                        _FullScreenChordGrid(result: result, player: player),
                   ),
                 ),
                 icon: const Icon(Icons.open_in_full_rounded, size: 18),
@@ -1821,7 +1880,9 @@ class _ChordTimelineGrid extends StatelessWidget {
       previousDisplayedChord = currentChord;
       final nextBeat = index + 1 < beats.length
           ? beats[index + 1]
-          : (result.duration > time ? result.duration : time + _fallbackBeatLength);
+          : (result.duration > time
+                ? result.duration
+                : time + _fallbackBeatLength);
       cells.add(
         _ChordGridCellData(
           chord: displayChord,
@@ -1916,9 +1977,10 @@ class _ChordGridRow extends StatelessWidget {
         final totalSpacing =
             gap * (beatsPerLine - 1) +
             (dividerWidth + dividerSpace * 2) * dividerCount;
-        final cellSize = (constraints.maxWidth - totalSpacing)
-            .clamp(0.0, double.infinity)
-            .toDouble() /
+        final cellSize =
+            (constraints.maxWidth - totalSpacing)
+                .clamp(0.0, double.infinity)
+                .toDouble() /
             beatsPerLine;
 
         return SizedBox(
@@ -2010,17 +2072,6 @@ class _FullScreenChordGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Future<void> togglePlayback() async {
-      if (player.playing) {
-        await player.pause();
-      } else {
-        if (player.processingState == ProcessingState.completed) {
-          await player.seek(Duration.zero);
-        }
-        await player.play();
-      }
-    }
-
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -2051,16 +2102,15 @@ class _FullScreenChordGrid extends StatelessWidget {
       bottomNavigationBar: SafeArea(
         top: false,
         child: SizedBox(
-          height: 104,
+          height: 84,
           child: StreamBuilder<PlayerState>(
             stream: player.playerStateStream,
             initialData: player.playerState,
-            builder: (context, snapshot) => _AnalysisMiniPlayer(
+            builder: (context, snapshot) => SongPlayBar(
               player: player,
-              isPlaying: snapshot.data?.playing ?? player.playing,
-              onPlayPause: togglePlayback,
               title: result.title,
               artworkUrl: result.artworkUrl,
+              compact: true,
             ),
           ),
         ),
@@ -2175,9 +2225,7 @@ class _AnalysisMiniPlayer extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: AppColors.primary.withOpacity(0.2),
-        ),
+        border: Border.all(color: AppColors.primary.withOpacity(0.2)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.22),
@@ -2265,9 +2313,9 @@ class _AnalysisMiniPlayer extends StatelessWidget {
                                     ? null
                                     : (value) => player.seek(
                                         Duration(
-                                          milliseconds: (value *
-                                                  duration.inMilliseconds)
-                                              .round(),
+                                          milliseconds:
+                                              (value * duration.inMilliseconds)
+                                                  .round(),
                                         ),
                                       ),
                               ),

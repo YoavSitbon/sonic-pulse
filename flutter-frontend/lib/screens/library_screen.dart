@@ -8,9 +8,12 @@ import '../providers/app_state.dart';
 import 'home_screen.dart';
 import 'find_song_screen.dart';
 import 'ai_analyzer_screen.dart';
+import 'key_details_screen.dart';
 
 class LibraryScreen extends StatelessWidget {
-  const LibraryScreen({super.key});
+  final int initialTab;
+
+  const LibraryScreen({super.key, this.initialTab = 0});
 
   @override
   Widget build(BuildContext context) {
@@ -28,8 +31,11 @@ class LibraryScreen extends StatelessWidget {
               shape: BoxShape.circle,
               color: AppColors.surfaceContainer,
             ),
-            child: const Icon(Icons.arrow_back_rounded,
-                color: AppColors.onSurfaceVariant, size: 18),
+            child: const Icon(
+              Icons.arrow_back_rounded,
+              color: AppColors.onSurfaceVariant,
+              size: 18,
+            ),
           ),
         ),
         title: Text(
@@ -43,7 +49,8 @@ class LibraryScreen extends StatelessWidget {
         centerTitle: true,
       ),
       body: DefaultTabController(
-        length: 2,
+        initialIndex: initialTab,
+        length: 3,
         child: Column(
           children: [
             // Tab bar
@@ -62,16 +69,14 @@ class LibraryScreen extends StatelessWidget {
                 tabs: const [
                   Tab(text: 'SAVED'),
                   Tab(text: 'HISTORY'),
+                  Tab(text: 'KEYS'),
                 ],
               ),
             ),
             // Tab views
             Expanded(
               child: TabBarView(
-                children: [
-                  _SavedTab(),
-                  _HistoryTab(),
-                ],
+                children: [_SavedTab(), _HistoryTab(), const _KeysPanel()],
               ),
             ),
           ],
@@ -98,6 +103,79 @@ class LibraryScreen extends StatelessWidget {
             );
           }
         },
+      ),
+    );
+  }
+}
+
+class _KeysPanel extends StatefulWidget {
+  const _KeysPanel();
+
+  @override
+  State<_KeysPanel> createState() => _KeysPanelState();
+}
+
+class _KeysPanelState extends State<_KeysPanel> {
+  static const _keys = [
+    'C',
+    'C#',
+    'D',
+    'Eb',
+    'E',
+    'F',
+    'F#',
+    'G',
+    'Ab',
+    'A',
+    'Bb',
+    'B',
+  ];
+
+  void _openKey(String key) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => KeyDetailsScreen(keyName: '$key Ionian'),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 22, 20, 10),
+      decoration: BoxDecoration(color: AppColors.surfaceContainerLow),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: _keys
+            .map(
+              (key) => InkWell(
+                onTap: () => _openKey(key),
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  width: 54,
+                  height: 42,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceContainer,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: AppColors.outlineVariant.withOpacity(0.4),
+                    ),
+                  ),
+                  child: Text(
+                    key,
+                    style: GoogleFonts.plusJakartaSans(
+                      color: AppColors.onSurface,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            )
+            .toList(),
       ),
     );
   }
@@ -153,25 +231,60 @@ class _HistoryTab extends StatelessWidget {
             subtitle: 'Every song you identify will appear here.',
           );
         }
-        return ListView.separated(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 100),
-          itemCount: history.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 10),
-          itemBuilder: (context, i) {
-            final colors = [
-              AppColors.secondary,
-              AppColors.primary,
-              AppColors.tertiary,
-              AppColors.secondaryFixedDim,
-              AppColors.primaryFixedDim,
-            ];
-            return _LibraryCard(
-              result: history[i],
-              accentColor: colors[i % colors.length],
-              onOpen: () => _openTrack(context, history[i]),
-              onToggleSave: () => state.toggleSave(history[i]),
-            );
-          },
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 100),
+          children: [
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () async {
+                  final shouldClear = await showDialog<bool>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                      title: const Text('Clear history?'),
+                      content: const Text(
+                        'This removes all recent identifications and their recordings. Saved songs will remain in Saved.',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          child: const Text('CANCEL'),
+                        ),
+                        FilledButton(
+                          onPressed: () => Navigator.pop(dialogContext, true),
+                          child: const Text('CLEAR'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (shouldClear == true && context.mounted) {
+                    await state.clearHistory();
+                  }
+                },
+                icon: const Icon(Icons.delete_sweep_rounded, size: 17),
+                label: const Text('CLEAR HISTORY'),
+              ),
+            ),
+            ...List.generate(history.length, (i) {
+              final colors = [
+                AppColors.secondary,
+                AppColors.primary,
+                AppColors.tertiary,
+                AppColors.secondaryFixedDim,
+                AppColors.primaryFixedDim,
+              ];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _LibraryCard(
+                  result: history[i],
+                  accentColor: colors[i % colors.length],
+                  onOpen: () => _openTrack(context, history[i]),
+                  onRemove: () => state.removeIdentification(history[i]),
+                  onToggleSave: () => state.toggleSave(history[i]),
+                ),
+              );
+            }),
+          ],
         );
       },
     );
@@ -199,140 +312,166 @@ class _LibraryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isSaved = context.watch<AppState>().isSaved(result);
     return InkWell(
       onTap: onOpen,
       borderRadius: BorderRadius.circular(16),
       child: Container(
         padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: AppColors.surfaceContainerLow.withOpacity(0.9),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
-      ),
-      child: Row(
-        children: [
-          // Album art
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  accentColor.withOpacity(0.3),
-                  AppColors.surfaceContainerHighest,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          color: AppColors.surfaceContainerLow.withOpacity(0.9),
+          border: Border.all(color: Colors.white.withOpacity(0.05)),
+        ),
+        child: Row(
+          children: [
+            // Album art
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    accentColor.withOpacity(0.3),
+                    AppColors.surfaceContainerHighest,
+                  ],
+                ),
+              ),
+              child: result.artworkUrl == null
+                  ? Icon(Icons.music_note_rounded, color: accentColor, size: 24)
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Image.network(
+                        result.artworkUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Icon(
+                          Icons.music_note_rounded,
+                          color: accentColor,
+                          size: 24,
+                        ),
+                      ),
+                    ),
+            ),
+            const SizedBox(width: 12),
+
+            // Track info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          result.title,
+                          style: GoogleFonts.sora(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.onSurface,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (onToggleSave != null)
+                        GestureDetector(
+                          onTap: onToggleSave,
+                          child: Container(
+                            width: 30,
+                            height: 30,
+                            margin: const EdgeInsets.only(left: 6, right: 8),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: isSaved
+                                  ? AppColors.primary.withOpacity(0.15)
+                                  : AppColors.surfaceContainerHigh,
+                              border: Border.all(
+                                color: isSaved
+                                    ? AppColors.primary.withOpacity(0.4)
+                                    : AppColors.outlineVariant.withOpacity(0.3),
+                              ),
+                            ),
+                            child: Icon(
+                              isSaved
+                                  ? Icons.bookmark_rounded
+                                  : Icons.bookmark_outline_rounded,
+                              color: isSaved
+                                  ? AppColors.primary
+                                  : AppColors.onSurfaceVariant,
+                              size: 15,
+                            ),
+                          ),
+                        ),
+                      if (onRemove != null && onToggleSave != null)
+                        InkWell(
+                          onTap: onRemove,
+                          borderRadius: BorderRadius.circular(16),
+                          child: const Padding(
+                            padding: EdgeInsets.only(left: 6),
+                            child: Icon(
+                              Icons.delete_outline_rounded,
+                              color: AppColors.onSurfaceVariant,
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    result.artist,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    result.timeIdentified,
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 10,
+                      color: AppColors.outline,
+                    ),
+                  ),
                 ],
               ),
             ),
-            child: result.artworkUrl == null
-                ? Icon(Icons.music_note_rounded, color: accentColor, size: 24)
-                : ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      result.artworkUrl!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Icon(
-                        Icons.music_note_rounded,
-                        color: accentColor,
-                        size: 24,
-                      ),
+
+            if (onToggleSave == null && onRemove != null)
+              GestureDetector(
+                onTap: onRemove,
+                child: Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.primary.withOpacity(0.15),
+                    border: Border.all(
+                      color: AppColors.primary.withOpacity(0.4),
                     ),
                   ),
-          ),
-          const SizedBox(width: 12),
-
-          // Track info
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  result.title,
-                  style: GoogleFonts.sora(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.onSurface,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  result.artist,
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12,
+                  child: const Icon(
+                    Icons.bookmark_rounded,
                     color: AppColors.primary,
-                    fontWeight: FontWeight.w500,
+                    size: 16,
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  result.timeIdentified,
-                  style: GoogleFonts.spaceGrotesk(
-                    fontSize: 10,
-                    color: AppColors.outline,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Action button
-          if (onRemove != null)
-            GestureDetector(
-              onTap: onRemove,
-              child: Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.surfaceContainerHigh,
-                  border: Border.all(
-                      color: AppColors.outlineVariant.withOpacity(0.3)),
-                ),
-                child: const Icon(Icons.bookmark_remove_rounded,
-                    color: AppColors.primary, size: 16),
-              ),
-            )
-          else if (onToggleSave != null)
-            GestureDetector(
-              onTap: onToggleSave,
-              child: Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: result.isSaved
-                      ? AppColors.primary.withOpacity(0.15)
-                      : AppColors.surfaceContainerHigh,
-                  border: Border.all(
-                    color: result.isSaved
-                        ? AppColors.primary.withOpacity(0.4)
-                        : AppColors.outlineVariant.withOpacity(0.3),
-                  ),
-                ),
-                child: Icon(
-                  result.isSaved
-                      ? Icons.bookmark_rounded
-                      : Icons.bookmark_outline_rounded,
-                  color: result.isSaved
-                      ? AppColors.primary
-                      : AppColors.onSurfaceVariant,
-                  size: 16,
                 ),
               ),
-            ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }
 }
 
 void _openTrack(BuildContext context, TrackResult result) {
-  final isTabResult = result.tabSourceId != null ||
+  final isTabResult =
+      result.tabSourceId != null ||
       result.tabChordContent?.isNotEmpty == true ||
       result.tabUrl?.isNotEmpty == true;
   Navigator.push(

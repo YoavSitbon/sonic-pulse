@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../models/ai_chat_message.dart';
 import '../models/track_result.dart';
+import 'storage_service.dart';
 
 class MusicAiException implements Exception {
   final String message;
@@ -16,11 +17,23 @@ class MusicAiException implements Exception {
 }
 
 class MusicAiService {
+  static const supportedModels = [
+    'gemini-3.5-flash-lite',
+    'gemini-3.6-flash',
+    'gemini-3.1-pro',
+  ];
+  static const defaultModel = 'gemini-3.6-flash';
+
+  final StorageService _storage = StorageService();
+
   Future<String> ask({
     required TrackResult song,
     required String question,
     required List<AiChatMessage> conversation,
+    String? model,
   }) async {
+    final selectedModel =
+        model ?? await _storage.loadMusicAiModel() ?? defaultModel;
     final response = await http
         .post(
           Uri.parse('${ApiConfig.baseUrl}${ApiConfig.songAiEndpoint}'),
@@ -30,21 +43,9 @@ class MusicAiService {
             'song': {
               'title': song.title,
               'artist': song.artist,
-              // Older tab responses did not include a separate chords list,
-              // even though the page displayed the chord sheet. Recover a
-              // compact sequence for the AI without sending the full sheet.
-              'chords': song.chords.isNotEmpty
-                  ? song.chords
-                  : _extractChords(song.tabChordContent),
-              'key': song.key,
-              'bpm': song.bpm == 0 ? null : song.bpm,
-              'tempo': _tempoFor(song.bpm),
-              'time_signature': song.timeSig == '—' ? null : song.timeSig,
-              'mood': song.mood,
+              'chords': _chordsInOrder(song),
             },
-            'conversation': conversation
-                .map((message) => message.toJson())
-                .toList(),
+            'model': selectedModel,
           }),
         )
         .timeout(ApiConfig.requestTimeout);
@@ -66,6 +67,16 @@ class MusicAiService {
       throw const MusicAiException('The AI returned an empty answer.');
     }
     return answer;
+  }
+
+  List<String> _chordsInOrder(TrackResult song) {
+    if (song.chordsByBeat.isNotEmpty) return song.chordsByBeat;
+    if (song.chordSegments.isNotEmpty) {
+      return song.chordSegments.map((segment) => segment.chord).toList();
+    }
+    return song.chords.isNotEmpty
+        ? song.chords
+        : _extractChords(song.tabChordContent);
   }
 
   String? _tempoFor(int bpm) {
@@ -91,9 +102,7 @@ class MusicAiService {
       if (tokens.isEmpty || tokens.any((token) => !chord.hasMatch(token))) {
         continue;
       }
-      for (final token in tokens) {
-        if (!result.contains(token)) result.add(token);
-      }
+      result.addAll(tokens);
     }
     return result.take(80).toList();
   }

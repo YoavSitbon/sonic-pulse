@@ -46,6 +46,7 @@ COPY utils/ utils/
 COPY blueprints/health/ blueprints/health/
 COPY blueprints/chords/ blueprints/chords/
 COPY services/audio/__init__.py services/audio/audio_utils.py services/audio/chord_recognition_service.py services/audio/chord_utils.py services/audio/spleeter_service.py services/audio/tempfiles.py services/audio/
+COPY services/music_theory_engine.py services/music_theory_engine.py
 COPY services/detectors/__init__.py services/detectors/chord_cnn_lstm_detector.py services/detectors/btc_sl_detector.py services/detectors/btc_pl_detector.py services/detectors/
 COPY models/__init__.py models/__init__.py
 COPY models/Chord-CNN-LSTM/ models/Chord-CNN-LSTM/

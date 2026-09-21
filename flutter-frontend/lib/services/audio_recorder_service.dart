@@ -6,7 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 /// Wraps the `record` package to record mic audio to a temp WAV file.
 class AudioRecorderService {
-  final AudioRecorder _recorder = AudioRecorder();
+  AudioRecorder _recorder = AudioRecorder();
   String? _currentPath;
 
   // ── Permission ───────────────────────────────────────────────────
@@ -64,6 +64,7 @@ class AudioRecorderService {
   Future<String?> stopRecording() async {
     final path = await _recorder.stop();
     _currentPath = null;
+    _replaceRecorder();
     return path;
   }
 
@@ -75,15 +76,27 @@ class AudioRecorderService {
 
   /// Cancels the current recording and deletes the temp file.
   Future<void> cancelRecording() async {
-    if (await _recorder.isRecording()) {
-      final path = await _recorder.stop();
-      if (path != null) {
-        try {
-          await File(path).delete();
-        } catch (_) {}
-      }
+    String? path;
+    try {
+      // stop() is also needed for an active startStream() session. In some
+      // plugin versions isRecording() does not report stream recordings.
+      path = await _recorder.stop();
+    } catch (_) {
+      // There was no active recorder session.
+    }
+    if (path != null) {
+      try {
+        await File(path).delete();
+      } catch (_) {}
     }
     _currentPath = null;
+    _replaceRecorder();
+  }
+
+  void _replaceRecorder() {
+    final previous = _recorder;
+    _recorder = AudioRecorder();
+    previous.dispose();
   }
 
   void dispose() {

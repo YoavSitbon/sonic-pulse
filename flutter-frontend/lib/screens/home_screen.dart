@@ -111,9 +111,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: GestureDetector(
                     onTap: () => Navigator.push(
                       context,
-                      MaterialPageRoute(
-                        builder: (_) => const SettingsScreen(),
-                      ),
+                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
                     ),
                     child: const Icon(
                       Icons.settings_rounded,
@@ -175,7 +173,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           iconColor: AppColors.secondary,
                           label: 'TOTAL SCANS',
                           value: '${state.scanCount}',
-                          badge: state.identifiedTracks.isNotEmpty ? '+${state.identifiedTracks.length}' : null,
+                          badge: state.identifiedTracks.isNotEmpty
+                              ? '+${state.identifiedTracks.length}'
+                              : null,
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -236,23 +236,31 @@ class _HomeScreenState extends State<HomeScreen> {
                         color: AppColors.onSurface,
                       ),
                     ),
-                    Row(
-                      children: [
-                        Text(
-                          'View all',
-                          style: GoogleFonts.spaceGrotesk(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: AppColors.secondary,
-                            letterSpacing: 0.5,
+                    GestureDetector(
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const LibraryScreen(initialTab: 1),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(
+                            'View all',
+                            style: GoogleFonts.spaceGrotesk(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: AppColors.secondary,
+                              letterSpacing: 0.5,
+                            ),
                           ),
-                        ),
-                        const Icon(
-                          Icons.chevron_right_rounded,
-                          size: 16,
-                          color: AppColors.secondary,
-                        ),
-                      ],
+                          const Icon(
+                            Icons.chevron_right_rounded,
+                            size: 16,
+                            color: AppColors.secondary,
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -309,9 +317,11 @@ class _HomeScreenState extends State<HomeScreen> {
                             result: tracks[i],
                             color: trackColors[i % trackColors.length],
                             onTap: () => _openTrack(context, tracks[i]),
+                            onRemove: () =>
+                                state.removeIdentification(tracks[i]),
+                            onToggleSave: () => state.toggleSave(tracks[i]),
                           ),
-                          if (i < tracks.length - 1)
-                            const SizedBox(height: 10),
+                          if (i < tracks.length - 1) const SizedBox(height: 10),
                         ],
                       ],
                     );
@@ -866,114 +876,156 @@ class _TrackRow extends StatelessWidget {
   final TrackResult result;
   final Color color;
   final VoidCallback onTap;
+  final VoidCallback? onRemove;
+  final VoidCallback? onToggleSave;
 
   const _TrackRow({
     required this.result,
     required this.color,
     required this.onTap,
+    this.onRemove,
+    this.onToggleSave,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isSaved = context.watch<AppState>().isSaved(result);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: Container(
         padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: AppColors.surfaceContainerLow.withOpacity(0.9),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
-      ),
-      child: Row(
-        children: [
-          // Album art placeholder
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  color.withOpacity(0.3),
-                  AppColors.surfaceContainerHighest,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          color: AppColors.surfaceContainerLow.withOpacity(0.9),
+          border: Border.all(color: Colors.white.withOpacity(0.05)),
+        ),
+        child: Row(
+          children: [
+            // Album art placeholder
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    color.withOpacity(0.3),
+                    AppColors.surfaceContainerHighest,
+                  ],
+                ),
+              ),
+              child: result.artworkUrl == null
+                  ? Icon(Icons.graphic_eq_rounded, color: color, size: 22)
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Image.network(
+                        result.artworkUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Icon(
+                          Icons.graphic_eq_rounded,
+                          color: color,
+                          size: 22,
+                        ),
+                      ),
+                    ),
+            ),
+            const SizedBox(width: 12),
+
+            // Track info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          result.title,
+                          style: GoogleFonts.sora(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.onSurface,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (onToggleSave != null)
+                        GestureDetector(
+                          onTap: onToggleSave,
+                          child: Container(
+                            width: 30,
+                            height: 30,
+                            margin: const EdgeInsets.only(left: 6, right: 8),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: AppColors.primary.withOpacity(0.15),
+                              border: Border.all(
+                                color: AppColors.primary.withOpacity(0.4),
+                              ),
+                            ),
+                            child: Icon(
+                              isSaved
+                                  ? Icons.bookmark_rounded
+                                  : Icons.bookmark_outline_rounded,
+                              color: isSaved
+                                  ? AppColors.primary
+                                  : AppColors.onSurfaceVariant,
+                              size: 15,
+                            ),
+                          ),
+                        ),
+                      if (onRemove != null)
+                        InkWell(
+                          onTap: onRemove,
+                          borderRadius: BorderRadius.circular(16),
+                          child: const Padding(
+                            padding: EdgeInsets.only(left: 6),
+                            child: Icon(
+                              Icons.delete_outline_rounded,
+                              color: AppColors.onSurfaceVariant,
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    result.artist,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      color: AppColors.onSurfaceVariant,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    result.timeIdentified,
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 10,
+                      color: AppColors.outline,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
                 ],
               ),
             ),
-            child: result.artworkUrl == null
-                ? Icon(Icons.graphic_eq_rounded, color: color, size: 22)
-                : ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      result.artworkUrl!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Icon(
-                        Icons.graphic_eq_rounded,
-                        color: color,
-                        size: 22,
-                      ),
-                    ),
-                  ),
-          ),
-          const SizedBox(width: 12),
-
-          // Track info
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  result.title,
-                  style: GoogleFonts.sora(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.onSurface,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  result.artist,
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12,
-                    color: AppColors.onSurfaceVariant,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  result.timeIdentified,
-                  style: GoogleFonts.spaceGrotesk(
-                    fontSize: 10,
-                    color: AppColors.outline,
-                    letterSpacing: 0.3,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Bookmark indicator
-          if (result.isSaved)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Icon(Icons.bookmark_rounded,
-                  color: AppColors.primary.withOpacity(0.7), size: 16),
-            ),
-
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }
 }
 
 void _openTrack(BuildContext context, TrackResult result) {
-  final isTabResult = result.tabSourceId != null ||
+  final isTabResult =
+      result.tabSourceId != null ||
       result.tabChordContent?.isNotEmpty == true ||
       result.tabUrl?.isNotEmpty == true;
   Navigator.push(

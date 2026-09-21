@@ -1,5 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/track_result.dart';
+import '../models/ai_chat_message.dart';
+import 'dart:convert';
 
 /// Handles all on-device persistence via SharedPreferences.
 class StorageService {
@@ -10,6 +12,60 @@ class StorageService {
   static const String _tabPreferencesKey = 'tab_source_preferences';
   static const String _autoShazamKey = 'auto_shazam_enabled';
   static const String _apiBaseUrlKey = 'api_base_url';
+  static const String _musicAiModelKey = 'music_ai_model';
+  static const String _musicAiConversationsKey = 'music_ai_conversations';
+
+  String _musicAiConversationId(TrackResult track) =>
+      '${track.title.trim().toLowerCase()}\u001f${track.artist.trim().toLowerCase()}';
+
+  Future<List<AiChatMessage>> loadMusicAiConversation(TrackResult track) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_musicAiConversationsKey);
+    if (raw == null) return [];
+    try {
+      final all = (jsonDecode(raw) as Map).cast<String, dynamic>();
+      final messages = all[_musicAiConversationId(track)];
+      if (messages is! List) return [];
+      return messages
+          .whereType<Map>()
+          .map(
+            (message) => AiChatMessage(
+              role: message['role']?.toString() ?? '',
+              content: message['content']?.toString() ?? '',
+            ),
+          )
+          .where(
+            (message) =>
+                (message.role == 'user' || message.role == 'assistant') &&
+                message.content.isNotEmpty,
+          )
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> saveMusicAiConversation(
+    TrackResult track,
+    List<AiChatMessage> messages,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_musicAiConversationsKey);
+    final all = <String, dynamic>{};
+    if (raw != null) {
+      try {
+        all.addAll((jsonDecode(raw) as Map).cast<String, dynamic>());
+      } catch (_) {}
+    }
+    if (messages.isEmpty) {
+      all.remove(_musicAiConversationId(track));
+    } else {
+      all[_musicAiConversationId(track)] = messages
+          .map((message) => message.toJson())
+          .toList();
+    }
+    await prefs.setString(_musicAiConversationsKey, jsonEncode(all));
+  }
 
   Future<String?> loadApiBaseUrl() async {
     final prefs = await SharedPreferences.getInstance();
@@ -19,6 +75,16 @@ class StorageService {
   Future<void> saveApiBaseUrl(String value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_apiBaseUrlKey, value);
+  }
+
+  Future<String?> loadMusicAiModel() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_musicAiModelKey);
+  }
+
+  Future<void> saveMusicAiModel(String value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_musicAiModelKey, value);
   }
 
   Future<bool> loadAutoShazam() async {
@@ -79,6 +145,22 @@ class StorageService {
     // cap to max history
     final capped = raw.take(_maxHistory).toList();
     await prefs.setStringList(_identifiedKey, capped);
+  }
+
+  Future<void> replaceIdentifiedTracks(List<TrackResult> tracks) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _identifiedKey,
+      tracks.take(_maxHistory).map((track) => track.toJsonString()).toList(),
+    );
+  }
+
+  Future<void> removeIdentifiedTrack(TrackResult track) async {
+    final tracks = await loadIdentifiedTracks();
+    tracks.removeWhere(
+      (item) => item.title == track.title && item.artist == track.artist,
+    );
+    await replaceIdentifiedTracks(tracks);
   }
 
   // ── Saved (bookmarked) tracks ────────────────────────────────────
@@ -149,5 +231,6 @@ class StorageService {
     await prefs.remove(_scanCountKey);
     await prefs.remove(_tabPreferencesKey);
     await prefs.remove(_autoShazamKey);
+    await prefs.remove(_musicAiConversationsKey);
   }
 }

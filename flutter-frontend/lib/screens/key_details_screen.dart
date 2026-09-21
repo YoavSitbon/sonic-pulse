@@ -4,8 +4,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../theme/app_colors.dart';
+import '../widgets/song_play_bar.dart';
 
-class KeyDetailsScreen extends StatelessWidget {
+class KeyDetailsScreen extends StatefulWidget {
   final String keyName;
   final String? songTitle;
   final String? artworkUrl;
@@ -20,8 +21,33 @@ class KeyDetailsScreen extends StatelessWidget {
   });
 
   @override
+  State<KeyDetailsScreen> createState() => _KeyDetailsScreenState();
+}
+
+class _KeyDetailsScreenState extends State<KeyDetailsScreen> {
+  late String _mode;
+
+  static const _modes = [
+    'Ionian',
+    'Dorian',
+    'Phrygian',
+    'Lydian',
+    'Mixolydian',
+    'Aeolian',
+    'Locrian',
+    'Pentatonic',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _mode = _KeyTheory.fromName(widget.keyName).mode;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final theory = _KeyTheory.fromName(keyName);
+    final baseTheory = _KeyTheory.fromName(widget.keyName);
+    final theory = _KeyTheory.fromName('${baseTheory.tonic} $_mode');
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -42,24 +68,67 @@ class KeyDetailsScreen extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 18, 16, 32),
         children: [
           Text(
-            keyName,
+            '${theory.tonic} ${theory.mode}',
             style: GoogleFonts.sora(
               color: AppColors.onSurface,
               fontSize: 28,
               fontWeight: FontWeight.w700,
             ),
           ),
-          if (songTitle != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              songTitle!,
-              style: GoogleFonts.plusJakartaSans(
-                color: AppColors.onSurfaceVariant,
-                fontSize: 12,
-              ),
-            ),
-          ],
           const SizedBox(height: 20),
+          Row(
+            children: [
+              Text(
+                'MODE',
+                style: GoogleFonts.spaceGrotesk(
+                  color: AppColors.onSurfaceVariant,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.1,
+                ),
+              ),
+              const Spacer(),
+              DropdownButton<String>(
+                value: _mode,
+                dropdownColor: AppColors.surfaceContainerHigh,
+                underline: const SizedBox.shrink(),
+                style: GoogleFonts.plusJakartaSans(
+                  color: AppColors.primary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+                onChanged: (value) {
+                  if (value != null) setState(() => _mode = value);
+                },
+                items: _modes
+                    .map(
+                      (mode) => DropdownMenuItem(
+                        value: mode,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(mode),
+                            if (mode == 'Ionian' || mode == 'Aeolian') ...[
+                              const SizedBox(width: 6),
+                              Text(
+                                mode == 'Ionian'
+                                    ? 'primary major'
+                                    : 'primary minor',
+                                style: GoogleFonts.plusJakartaSans(
+                                  color: AppColors.onSurfaceVariant,
+                                  fontSize: 9,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
           _SectionLabel('DIATONIC CHORDS'),
           const SizedBox(height: 10),
           LayoutBuilder(
@@ -91,9 +160,9 @@ class KeyDetailsScreen extends StatelessWidget {
                   MaterialPageRoute(
                     builder: (_) => _FullScreenNeck(
                       theory: theory,
-                      player: player,
-                      title: songTitle,
-                      artworkUrl: artworkUrl,
+                      player: widget.player,
+                      title: widget.songTitle,
+                      artworkUrl: widget.artworkUrl,
                     ),
                   ),
                 ),
@@ -102,23 +171,28 @@ class KeyDetailsScreen extends StatelessWidget {
               ),
             ],
           ),
-          Text('Standard tuning · frets 0–22', style: GoogleFonts.plusJakartaSans(
-            color: AppColors.onSurfaceVariant, fontSize: 11,
-          )),
+          Text(
+            'Standard tuning · frets 0–22',
+            style: GoogleFonts.plusJakartaSans(
+              color: AppColors.onSurfaceVariant,
+              fontSize: 11,
+            ),
+          ),
           const SizedBox(height: 12),
           _GuitarNeck(theory: theory),
         ],
       ),
-      bottomNavigationBar: player == null
+      bottomNavigationBar: widget.player == null
           ? null
           : SafeArea(
               top: false,
               child: SizedBox(
-                height: 104,
-                child: _KeyMiniPlayer(
-                  player: player!,
-                  title: songTitle ?? 'Analyzed song',
-                  artworkUrl: artworkUrl,
+                height: 84,
+                child: SongPlayBar(
+                  player: widget.player!,
+                  title: widget.songTitle ?? 'Analyzed song',
+                  artworkUrl: widget.artworkUrl,
+                  compact: true,
                 ),
               ),
             ),
@@ -129,6 +203,7 @@ class KeyDetailsScreen extends StatelessWidget {
 class _KeyTheory {
   final String tonic;
   final int tonicPc;
+  final String mode;
   final bool minor;
   final List<String> notes;
   final List<_DiatonicChord> chords;
@@ -136,41 +211,112 @@ class _KeyTheory {
   const _KeyTheory({
     required this.tonic,
     required this.tonicPc,
+    required this.mode,
     required this.minor,
     required this.notes,
     required this.chords,
   });
 
   static const _noteNames = [
-    'C', 'C#', 'D', 'D#', 'E', 'F',
-    'F#', 'G', 'G#', 'A', 'A#', 'B',
+    'C',
+    'C#',
+    'D',
+    'D#',
+    'E',
+    'F',
+    'F#',
+    'G',
+    'G#',
+    'A',
+    'A#',
+    'B',
   ];
   static const _roots = <String, int>{
-    'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3,
-    'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8,
-    'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11,
+    'C': 0,
+    'C#': 1,
+    'Db': 1,
+    'D': 2,
+    'D#': 3,
+    'Eb': 3,
+    'E': 4,
+    'F': 5,
+    'F#': 6,
+    'Gb': 6,
+    'G': 7,
+    'G#': 8,
+    'Ab': 8,
+    'A': 9,
+    'A#': 10,
+    'Bb': 10,
+    'B': 11,
   };
 
   factory _KeyTheory.fromName(String value) {
-    final match = RegExp(r'^([A-Ga-g](?:#|b)?)\s*(major|minor|maj|min|m)?')
-        .firstMatch(value.trim());
+    final normalizedValue = value.trim().replaceAll('♭', 'b');
+    final match = RegExp(r'^([A-Ga-g](?:#|b)?)').firstMatch(normalizedValue);
     final rootText = match?.group(1) ?? 'C';
-    final tonicPc = _roots[rootText[0].toUpperCase() + rootText.substring(1)] ?? 0;
-    final minor = {'minor', 'min', 'm'}.contains(match?.group(2)?.toLowerCase());
-    final intervals = minor ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11];
-    final roman = minor
-        ? ['i', 'ii°', 'III', 'iv', 'v', 'VI', 'VII']
-        : ['I', 'ii', 'iii', 'IV', 'V', 'vi', 'vii°'];
-    final notes = intervals.map((interval) => _noteNames[(tonicPc + interval) % 12]).toList();
+    final tonicPc =
+        _roots[rootText[0].toUpperCase() + rootText.substring(1)] ?? 0;
+    final descriptor = normalizedValue
+        .substring(match?.end ?? rootText.length)
+        .toLowerCase()
+        .replaceAll(':', ' ');
+    final mode = descriptor.contains('pentatonic')
+        ? 'Pentatonic'
+        : descriptor.contains('dorian')
+        ? 'Dorian'
+        : descriptor.contains('phrygian')
+        ? 'Phrygian'
+        : descriptor.contains('lydian')
+        ? 'Lydian'
+        : descriptor.contains('mixolydian')
+        ? 'Mixolydian'
+        : descriptor.contains('locrian')
+        ? 'Locrian'
+        : RegExp(r'\b(minor|min|m|aeolian)\b').hasMatch(descriptor)
+        ? 'Aeolian'
+        : 'Ionian';
+    final intervals = switch (mode) {
+      'Dorian' => [0, 2, 3, 5, 7, 9, 10],
+      'Phrygian' => [0, 1, 3, 5, 7, 8, 10],
+      'Lydian' => [0, 2, 4, 6, 7, 9, 11],
+      'Mixolydian' => [0, 2, 4, 5, 7, 9, 10],
+      'Aeolian' => [0, 2, 3, 5, 7, 8, 10],
+      'Locrian' => [0, 1, 3, 5, 6, 8, 10],
+      'Pentatonic' => [0, 2, 4, 7, 9],
+      _ => [0, 2, 4, 5, 7, 9, 11],
+    };
+    final roman = switch (mode) {
+      'Dorian' => ['i', 'ii', 'III', 'IV', 'v', 'vi°', 'VII'],
+      'Phrygian' => ['i', 'II', 'III', 'iv°', 'v', 'VI', 'vii'],
+      'Lydian' => ['I', 'II', 'iii', 'iv°', 'V', 'vi', 'vii'],
+      'Mixolydian' => ['I', 'ii', 'iii', 'IV', 'v', 'vi', 'VII'],
+      'Aeolian' => ['i', 'ii°', 'III', 'iv', 'v', 'VI', 'VII'],
+      'Locrian' => ['i°', 'II', 'iii', 'iv', 'V', 'VI', 'vii'],
+      'Pentatonic' => ['I', 'ii', 'iii', 'V', 'vi'],
+      _ => ['I', 'ii', 'iii', 'IV', 'V', 'vi', 'vii°'],
+    };
+    final notes = intervals
+        .map((interval) => _noteNames[(tonicPc + interval) % 12])
+        .toList();
     final chords = <_DiatonicChord>[];
     for (var i = 0; i < notes.length; i++) {
-      final symbol = notes[i] + (roman[i].contains('°') ? 'dim' : roman[i].toLowerCase() == roman[i] ? 'm' : '');
-      chords.add(_DiatonicChord(degree: roman[i], symbol: symbol, note: notes[i]));
+      final symbol =
+          notes[i] +
+          (roman[i].contains('°')
+              ? 'dim'
+              : roman[i].toLowerCase() == roman[i]
+              ? 'm'
+              : '');
+      chords.add(
+        _DiatonicChord(degree: roman[i], symbol: symbol, note: notes[i]),
+      );
     }
     return _KeyTheory(
       tonic: _noteNames[tonicPc],
       tonicPc: tonicPc,
-      minor: minor,
+      mode: mode,
+      minor: mode == 'Aeolian',
       notes: notes,
       chords: chords,
     );
@@ -182,7 +328,11 @@ class _DiatonicChord {
   final String symbol;
   final String note;
 
-  const _DiatonicChord({required this.degree, required this.symbol, required this.note});
+  const _DiatonicChord({
+    required this.degree,
+    required this.symbol,
+    required this.note,
+  });
 }
 
 class _SectionLabel extends StatelessWidget {
@@ -249,7 +399,8 @@ class _GuitarNeck extends StatelessWidget {
 
   const _GuitarNeck({required this.theory});
 
-  static const _tuning = [4, 9, 2, 7, 11, 4];
+  // Render from the high E string down to the low E string.
+  static const _tuning = [4, 11, 7, 2, 9, 4];
 
   @override
   Widget build(BuildContext context) {
@@ -283,12 +434,16 @@ class _GuitarNeck extends StatelessWidget {
                   ),
               ],
             ),
-            for (var stringIndex = 0; stringIndex < _tuning.length; stringIndex++)
+            for (
+              var stringIndex = 0;
+              stringIndex < _tuning.length;
+              stringIndex++
+            )
               _GuitarString(
                 openPc: _tuning[stringIndex],
                 notes: theory.notes,
                 tonicPc: theory.tonicPc,
-                label: ['E', 'A', 'D', 'G', 'B', 'e'][stringIndex],
+                label: ['E', 'B', 'G', 'D', 'A', 'E'][stringIndex],
               ),
           ],
         ),
@@ -343,7 +498,11 @@ class _FretCell extends StatelessWidget {
   final bool active;
   final bool tonic;
 
-  const _FretCell({required this.note, required this.active, required this.tonic});
+  const _FretCell({
+    required this.note,
+    required this.active,
+    required this.tonic,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -365,7 +524,9 @@ class _FretCell extends StatelessWidget {
               height: 25,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: tonic ? AppColors.primaryContainer : AppColors.secondaryContainer,
+                color: tonic
+                    ? AppColors.primaryContainer
+                    : AppColors.secondaryContainer,
                 border: Border.all(
                   color: tonic ? AppColors.primary : AppColors.secondary,
                   width: tonic ? 1.5 : 1,
@@ -498,7 +659,10 @@ class _FloatingPlaybackControls extends StatelessWidget {
             children: [
               IconButton(
                 visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+                constraints: const BoxConstraints.tightFor(
+                  width: 36,
+                  height: 36,
+                ),
                 padding: EdgeInsets.zero,
                 onPressed: _togglePlayback,
                 icon: Icon(
@@ -509,7 +673,10 @@ class _FloatingPlaybackControls extends StatelessWidget {
               ),
               IconButton(
                 visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+                constraints: const BoxConstraints.tightFor(
+                  width: 36,
+                  height: 36,
+                ),
                 padding: EdgeInsets.zero,
                 onPressed: () => player.stop(),
                 icon: const Icon(
@@ -618,12 +785,14 @@ class _KeyMiniPlayer extends StatelessWidget {
                           stream: player.durationStream,
                           initialData: player.duration,
                           builder: (context, durationSnapshot) {
-                            final duration = durationSnapshot.data ?? Duration.zero;
+                            final duration =
+                                durationSnapshot.data ?? Duration.zero;
                             final progress = duration.inMilliseconds == 0
                                 ? 0.0
-                                : (position.inMilliseconds / duration.inMilliseconds)
-                                    .clamp(0.0, 1.0)
-                                    .toDouble();
+                                : (position.inMilliseconds /
+                                          duration.inMilliseconds)
+                                      .clamp(0.0, 1.0)
+                                      .toDouble();
                             return SliderTheme(
                               data: SliderTheme.of(context).copyWith(
                                 trackHeight: 2,
@@ -641,11 +810,12 @@ class _KeyMiniPlayer extends StatelessWidget {
                                 onChanged: duration.inMilliseconds == 0
                                     ? null
                                     : (value) => player.seek(
-                                          Duration(
-                                            milliseconds: (value * duration.inMilliseconds)
-                                                .round(),
-                                          ),
+                                        Duration(
+                                          milliseconds:
+                                              (value * duration.inMilliseconds)
+                                                  .round(),
                                         ),
+                                      ),
                               ),
                             );
                           },
@@ -659,7 +829,9 @@ class _KeyMiniPlayer extends StatelessWidget {
                 visualDensity: VisualDensity.compact,
                 onPressed: _toggle,
                 icon: Icon(
-                  state.playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  state.playing
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
                   color: AppColors.primary,
                   size: 25,
                 ),

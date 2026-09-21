@@ -5,6 +5,7 @@ class SongSearchResult {
     required this.album,
     this.artistId,
     this.artworkUrl,
+    this.previewUrl,
   });
 
   final String title;
@@ -12,6 +13,7 @@ class SongSearchResult {
   final String album;
   final int? artistId;
   final String? artworkUrl;
+  final String? previewUrl;
 
   factory SongSearchResult.fromItunesJson(Map<String, dynamic> json) {
     return SongSearchResult(
@@ -20,6 +22,7 @@ class SongSearchResult {
       album: json['collectionName'] as String? ?? '',
       artistId: (json['artistId'] as num?)?.toInt(),
       artworkUrl: json['artworkUrl100'] as String?,
+      previewUrl: json['previewUrl'] as String?,
     );
   }
 }

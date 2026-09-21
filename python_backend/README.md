@@ -66,10 +66,10 @@ The API implements production-grade rate limiting to ensure fair usage and syste
 - `POST /api/lrclib-lyrics` - LRClib synchronized lyrics fetching
 - `POST /api/song-ai/chat` - Context-aware music theory conversation
 
-The music chat endpoint uses a local OpenAI-compatible Qwen service. The
-default is Ollama at `http://127.0.0.1:11434/v1` with `qwen3:8b`. Configure
-`MUSIC_AI_BASE_URL`, `MUSIC_AI_MODEL`, and optionally `MUSIC_AI_API_KEY` for a
-different local server such as vLLM or llama.cpp.
+The music chat endpoint uses Google's Gemini API. Set `GEMINI_API_KEY` in the
+backend environment. The Flutter settings page lets the user choose between
+the available Gemini models (`gemini-3.5-flash-lite`, `gemini-3.6-flash`, and
+`gemini-3.1-pro`).
 - `POST /api/search-youtube` - YouTube video search
 - `GET /api/search-piped` - Piped API video search
 

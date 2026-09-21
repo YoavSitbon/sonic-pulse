@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:android_intent_plus/android_intent.dart';
 import '../theme/app_colors.dart';
 import '../widgets/bottom_nav_bar.dart';
+import '../widgets/song_play_bar.dart';
 import '../models/track_result.dart';
 import '../models/ai_chat_message.dart';
 import '../services/audio_recorder_service.dart';
@@ -21,6 +23,7 @@ import 'home_screen.dart';
 import 'ai_analyzer_screen.dart';
 import 'library_screen.dart';
 import 'settings_screen.dart';
+import 'key_details_screen.dart';
 import '../services/storage_service.dart';
 import '../services/music_ai_service.dart';
 
@@ -44,10 +47,9 @@ class _FindSongScreenState extends State<FindSongScreen>
   TrackResult? _result;
   String? _errorMessage;
   bool _isPlaying = false;
-  int _recordingSecondsLeft = 0;
-  Timer? _recordingTimer;
   StreamSubscription? _amplitudeSubscription;
   double _amplitudeLevel = 0.05;
+  int _recordingGeneration = 0;
   Timer? _searchDebounce;
   final _searchController = TextEditingController();
   List<SongSearchResult> _searchResults = [];
@@ -88,6 +90,8 @@ class _FindSongScreenState extends State<FindSongScreen>
     if (widget.initialResult != null) {
       _result = widget.initialResult;
       _scanState = _ScanState.result;
+      unawaited(_preparePlayback(widget.initialResult!));
+      unawaited(_loadAiConversation(widget.initialResult!));
     }
     final storage = StorageService();
     storage.loadTabPreferences().then((preferences) {
@@ -154,7 +158,6 @@ class _FindSongScreenState extends State<FindSongScreen>
     _outerPulse.dispose();
     _innerPulse.dispose();
     for (final c in _barCtrls) c.dispose();
-    _recordingTimer?.cancel();
     _amplitudeSubscription?.cancel();
     _searchDebounce?.cancel();
     _searchController.dispose();
@@ -165,11 +168,6 @@ class _FindSongScreenState extends State<FindSongScreen>
   }
 
   Future<void> _togglePlayback() async {
-    final audioUrl = _result?.audioUrl;
-    if (audioUrl == null || audioUrl.isEmpty) {
-      setState(() => _isPlaying = !_isPlaying);
-      return;
-    }
     try {
       if (_isPlaying) {
         await _audioPlayer.pause();
@@ -178,14 +176,58 @@ class _FindSongScreenState extends State<FindSongScreen>
         if (_audioPlayer.processingState == ProcessingState.completed) {
           await _audioPlayer.seek(Duration.zero);
         }
-        if (_audioPlayer.audioSource == null) {
-          await _audioPlayer.setUrl(audioUrl);
+        if (_audioPlayer.audioSource == null && _result != null) {
+          await _preparePlayback(_result!);
         }
+        if (_audioPlayer.audioSource == null) return;
         await _audioPlayer.play();
         if (mounted) setState(() => _isPlaying = true);
       }
     } catch (e) {
       _showError('Could not play the song preview.');
+    }
+  }
+
+  Future<void> _preparePlayback(TrackResult result) async {
+    try {
+      final localPath = result.localAudioPath;
+      if (localPath != null && localPath.isNotEmpty) {
+        final file = File(localPath);
+        if (await file.exists()) {
+          await _audioPlayer.setFilePath(localPath);
+          return;
+        }
+      }
+
+      var audioUrl = result.audioUrl;
+      final youtubeUrl =
+          result.youtubeUrl ?? result.analysisData['youtube_url']?.toString();
+      if ((audioUrl == null || audioUrl.isEmpty) &&
+          youtubeUrl != null &&
+          youtubeUrl.isNotEmpty) {
+        audioUrl = await _recognizer.refreshYouTubeAudioUrl(youtubeUrl);
+      }
+      if (audioUrl != null && audioUrl.isNotEmpty && mounted) {
+        await _audioPlayer.setUrl(audioUrl);
+        return;
+      }
+    } catch (_) {
+      // Preview lookup below can still recover from an expired source URL.
+    }
+
+    try {
+      final matches = await _musicSearch.search(
+        '${result.title} ${result.artist}',
+      );
+      final preview = matches
+          .map((match) => match.previewUrl)
+          .whereType<String>()
+          .firstWhere((url) => url.isNotEmpty, orElse: () => '');
+      if (preview.isNotEmpty && mounted) {
+        await _audioPlayer.setUrl(preview);
+      }
+    } catch (_) {
+      // Playback remains disabled when no preview is available.
     }
   }
 
@@ -223,10 +265,16 @@ class _FindSongScreenState extends State<FindSongScreen>
   }
 
   Future<void> _beginRecognition({required bool background}) async {
-    _recordingTimer?.cancel();
-    _recordingTimer = null;
+    final generation = ++_recordingGeneration;
     await _amplitudeSubscription?.cancel();
     _amplitudeSubscription = null;
+    _amplitudeLevel = 0.05;
+    _outerPulse
+      ..reset()
+      ..repeat();
+    _innerPulse
+      ..reset()
+      ..repeat();
     _autoListening = true;
     _autoButtonPressed = !background;
     _recognitionCancel = Completer<void>();
@@ -234,13 +282,14 @@ class _FindSongScreenState extends State<FindSongScreen>
     if (!background && mounted) {
       setState(() {
         _scanState = _ScanState.recording;
-        _recordingSecondsLeft = 0;
         _errorMessage = null;
       });
     }
 
     _amplitudeSubscription = _recorder.amplitudeStream.listen((amplitude) {
-      if (!mounted || !_autoListening) return;
+      if (!mounted || generation != _recordingGeneration || !_autoListening) {
+        return;
+      }
       final db = amplitude.current;
       final level = db.isFinite && db > -55
           ? ((db + 55) / 35).clamp(0.0, 1.0).toDouble()
@@ -248,20 +297,12 @@ class _FindSongScreenState extends State<FindSongScreen>
       setState(() => _amplitudeLevel = level);
     });
 
-    // Show elapsed listening time. Recognition runs in short windows until a
-    // match is found, so there is no arbitrary ten-second cutoff.
-    _recordingTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) {
-        t.cancel();
-        return;
-      }
-      if (_autoListening) {
-        setState(() => _recordingSecondsLeft++);
-      }
-    });
-
     try {
       final audioStream = await _recorder.startStream();
+      if (!mounted || generation != _recordingGeneration || !_autoListening) {
+        await _recorder.cancelRecording();
+        return;
+      }
       final result = await _recognizer.findTabsFromStream(
         audioStream,
         preferences: _tabPreferences,
@@ -352,6 +393,8 @@ class _FindSongScreenState extends State<FindSongScreen>
         _aiConversation = [];
         _scanState = _ScanState.result;
       });
+      unawaited(_loadAiConversation(resultWithArtwork));
+      unawaited(_preparePlayback(resultWithArtwork));
     } catch (e) {
       _showError(
         'Song analysis failed: ${e.toString().replaceAll('RecognitionException: ', '')}',
@@ -360,14 +403,13 @@ class _FindSongScreenState extends State<FindSongScreen>
   }
 
   Future<void> _stopRecognitionSession() async {
+    _recordingGeneration++;
     _autoListening = false;
     if (_recognitionCancel != null && !_recognitionCancel!.isCompleted) {
       _recognitionCancel!.complete();
     }
     _recognitionCancel = null;
     await _recorder.cancelRecording();
-    _recordingTimer?.cancel();
-    _recordingTimer = null;
     await _amplitudeSubscription?.cancel();
     _amplitudeSubscription = null;
   }
@@ -383,6 +425,15 @@ class _FindSongScreenState extends State<FindSongScreen>
       _aiConversation = [];
       _scanState = _ScanState.result;
     });
+    unawaited(_loadAiConversation(result));
+    unawaited(_preparePlayback(result));
+  }
+
+  Future<void> _loadAiConversation(TrackResult song) async {
+    final conversation = await StorageService().loadMusicAiConversation(song);
+    if (mounted && identical(_result, song)) {
+      setState(() => _aiConversation = conversation);
+    }
   }
 
   Future<void> _openAiChat() async {
@@ -398,6 +449,7 @@ class _FindSongScreenState extends State<FindSongScreen>
     );
     if (conversation != null && mounted) {
       setState(() => _aiConversation = conversation);
+      unawaited(StorageService().saveMusicAiConversation(result, conversation));
     }
   }
 
@@ -409,8 +461,8 @@ class _FindSongScreenState extends State<FindSongScreen>
     });
   }
 
-  void _resetToIdle() {
-    unawaited(_stopRecognitionSession());
+  Future<void> _resetToIdle() async {
+    await _stopRecognitionSession();
     _amplitudeLevel = 0.05;
     _pendingAutoResult = null;
     _autoButtonPressed = false;
@@ -442,11 +494,10 @@ class _FindSongScreenState extends State<FindSongScreen>
         mainAxisSize: MainAxisSize.min,
         children: [
           if (_result != null)
-            _TabMiniPlayer(
-              result: _result!,
+            SongPlayBar(
               player: _audioPlayer,
-              isPlaying: _isPlaying,
-              onPlayPause: () => _togglePlayback(),
+              title: _result!.title,
+              artworkUrl: _result!.artworkUrl,
             ),
           AppBottomNavBar(
             currentIndex: 1,
@@ -481,23 +532,23 @@ class _FindSongScreenState extends State<FindSongScreen>
         return _ResultView(
           key: const ValueKey('result'),
           result: _result!,
+          player: _audioPlayer,
           isPlaying: _isPlaying,
           onPlayPause: () => _togglePlayback(),
-          onReset: _resetToIdle,
+          onReset: () => unawaited(_resetToIdle()),
           onToggleSave: () => context.read<AppState>().toggleSave(_result!),
           onAskAi: _openAiChat,
         );
       case _ScanState.recording:
         return _RecordingView(
           key: const ValueKey('recording'),
-          secondsLeft: _recordingSecondsLeft,
           outerScale: _outerScale,
           outerOpacity: _outerOpacity,
           innerScale: _innerScale,
           innerOpacity: _innerOpacity,
           barAnims: _barAnims,
           amplitudeLevel: _amplitudeLevel,
-          onCancel: _resetToIdle,
+          onCancel: () => unawaited(_resetToIdle()),
         );
       case _ScanState.analyzing:
         return _AnalyzingView(key: const ValueKey('analyzing'));
@@ -510,14 +561,14 @@ class _FindSongScreenState extends State<FindSongScreen>
           errorMessage: _searchError,
           onChanged: _onSearchChanged,
           onSelect: _selectSong,
-          onBack: _resetToIdle,
+          onBack: () => unawaited(_resetToIdle()),
           onShazam: _startScan,
         );
       case _ScanState.error:
         return _ErrorView(
           key: const ValueKey('error'),
           message: _errorMessage ?? 'Unknown error',
-          onRetry: _resetToIdle,
+          onRetry: () => unawaited(_resetToIdle()),
         );
       case _ScanState.idle:
         return _ListeningView(
@@ -1041,7 +1092,6 @@ class _SongSearchTile extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────
 
 class _RecordingView extends StatelessWidget {
-  final int secondsLeft;
   final Animation<double> outerScale;
   final Animation<double> outerOpacity;
   final Animation<double> innerScale;
@@ -1052,7 +1102,6 @@ class _RecordingView extends StatelessWidget {
 
   const _RecordingView({
     super.key,
-    required this.secondsLeft,
     required this.outerScale,
     required this.outerOpacity,
     required this.innerScale,
@@ -1125,17 +1174,6 @@ class _RecordingView extends StatelessWidget {
                     ),
                   ),
                   Container(
-                    width: 210,
-                    height: 210,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Colors.redAccent.withOpacity(0.45),
-                        width: 1,
-                      ),
-                    ),
-                  ),
-                  Container(
                     width: 160,
                     height: 160,
                     decoration: BoxDecoration(
@@ -1167,23 +1205,6 @@ class _RecordingView extends StatelessWidget {
                           size: 40,
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          '$secondsLeft',
-                          style: GoogleFonts.sora(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.redAccent,
-                          ),
-                        ),
-                        Text(
-                          'SEC LISTENING',
-                          style: GoogleFonts.spaceGrotesk(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.onSurfaceVariant,
-                            letterSpacing: 1.5,
-                          ),
-                        ),
                       ],
                     ),
                   ),
@@ -1369,6 +1390,7 @@ class _ErrorView extends StatelessWidget {
 
 class _ResultView extends StatelessWidget {
   final TrackResult result;
+  final AudioPlayer player;
   final VoidCallback onReset;
   final bool isPlaying;
   final VoidCallback onPlayPause;
@@ -1378,6 +1400,7 @@ class _ResultView extends StatelessWidget {
   const _ResultView({
     super.key,
     required this.result,
+    required this.player,
     required this.onReset,
     required this.isPlaying,
     required this.onPlayPause,
@@ -1477,6 +1500,41 @@ class _ResultView extends StatelessWidget {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
+                                if (result.key != '—') ...[
+                                  const SizedBox(height: 8),
+                                  GestureDetector(
+                                    onTap: () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => KeyDetailsScreen(
+                                          keyName: result.key,
+                                          songTitle: result.title,
+                                          artworkUrl: result.artworkUrl,
+                                          player: player,
+                                        ),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.music_note_rounded,
+                                          color: AppColors.secondary,
+                                          size: 15,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          'KEY ${result.key}',
+                                          style: GoogleFonts.spaceGrotesk(
+                                            color: AppColors.secondary,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ],
                             ),
                           ),
@@ -1795,6 +1853,8 @@ class _ResultView extends StatelessWidget {
             content: result.tabChordContent,
             sourceId: result.tabSourceId,
             browser: browser,
+            player: player,
+            artworkUrl: result.artworkUrl,
           );
         },
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
@@ -1818,6 +1878,21 @@ class _SongAiChatSheet extends StatefulWidget {
   State<_SongAiChatSheet> createState() => _SongAiChatSheetState();
 }
 
+Future<List<AiChatMessage>?> showSongCoach(
+  BuildContext context,
+  TrackResult song, {
+  List<AiChatMessage> initialConversation = const [],
+}) {
+  return showModalBottomSheet<List<AiChatMessage>>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: Colors.transparent,
+    builder: (_) =>
+        _SongAiChatSheet(song: song, initialConversation: initialConversation),
+  );
+}
+
 class _SongAiChatSheetState extends State<_SongAiChatSheet> {
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
@@ -1836,6 +1911,27 @@ class _SongAiChatSheetState extends State<_SongAiChatSheet> {
   void initState() {
     super.initState();
     _messages = [...widget.initialConversation];
+    unawaited(_loadModel());
+    unawaited(_restoreConversation());
+  }
+
+  String _model = MusicAiService.defaultModel;
+
+  Future<void> _loadModel() async {
+    final saved = await StorageService().loadMusicAiModel();
+    if (!mounted ||
+        saved == null ||
+        !MusicAiService.supportedModels.contains(saved)) {
+      return;
+    }
+    setState(() => _model = saved);
+  }
+
+  Future<void> _restoreConversation() async {
+    final stored = await StorageService().loadMusicAiConversation(widget.song);
+    if (!mounted || stored.isEmpty || _messages.isNotEmpty) return;
+    setState(() => _messages = stored);
+    _scrollToBottom();
   }
 
   @override
@@ -1861,12 +1957,16 @@ class _SongAiChatSheetState extends State<_SongAiChatSheet> {
         song: widget.song,
         question: question,
         conversation: _messages.sublist(0, _messages.length - 1),
+        model: _model,
       );
       if (!mounted) return;
       setState(() {
         _messages.add(AiChatMessage(role: 'assistant', content: answer));
         _isSending = false;
       });
+      unawaited(
+        StorageService().saveMusicAiConversation(widget.song, _messages),
+      );
       _scrollToBottom();
     } catch (error) {
       if (!mounted) return;
@@ -1876,6 +1976,20 @@ class _SongAiChatSheetState extends State<_SongAiChatSheet> {
         _error = error.toString().replaceFirst('MusicAiException: ', '');
       });
     }
+  }
+
+  Future<void> _clearConversation() async {
+    if (_isSending) return;
+    setState(() {
+      _messages = [];
+      _error = null;
+    });
+    await StorageService().saveMusicAiConversation(widget.song, const []);
+  }
+
+  Future<void> _closeCoach() async {
+    await StorageService().saveMusicAiConversation(widget.song, _messages);
+    if (mounted) Navigator.pop(context, _messages);
   }
 
   void _scrollToBottom() {
@@ -1950,11 +2064,46 @@ class _SongAiChatSheetState extends State<_SongAiChatSheet> {
                           color: AppColors.onSurfaceVariant,
                         ),
                       ),
+                      DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _model,
+                          isDense: true,
+                          dropdownColor: AppColors.surfaceContainerHigh,
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 10,
+                            color: AppColors.secondary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          icon: const Icon(
+                            Icons.expand_more_rounded,
+                            size: 15,
+                            color: AppColors.secondary,
+                          ),
+                          items: MusicAiService.supportedModels
+                              .map(
+                                (model) => DropdownMenuItem(
+                                  value: model,
+                                  child: Text(model),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (model) {
+                            if (model == null) return;
+                            setState(() => _model = model);
+                          },
+                        ),
+                      ),
                     ],
                   ),
                 ),
                 IconButton(
-                  onPressed: () => Navigator.pop(context, _messages),
+                  tooltip: 'Clear conversation',
+                  onPressed: _messages.isEmpty ? null : _clearConversation,
+                  icon: const Icon(Icons.delete_sweep_outlined),
+                  color: AppColors.onSurfaceVariant,
+                ),
+                IconButton(
+                  onPressed: _closeCoach,
                   icon: const Icon(Icons.close_rounded),
                   color: AppColors.onSurfaceVariant,
                 ),
@@ -2102,16 +2251,108 @@ class _AiMessageBubble extends StatelessWidget {
                 : AppColors.outlineVariant.withOpacity(0.18),
           ),
         ),
-        child: Text(
-          message.content,
-          style: const TextStyle(
-            color: AppColors.onSurface,
-            fontSize: 13,
-            height: 1.45,
-          ),
-        ),
+        child: _AiFormattedText(message.content),
       ),
     );
+  }
+}
+
+class _AiFormattedText extends StatelessWidget {
+  final String text;
+
+  const _AiFormattedText(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = text.replaceAll('\r\n', '\n').split('\n');
+    final spans = <InlineSpan>[];
+    for (var i = 0; i < lines.length; i++) {
+      final raw = lines[i].trimRight();
+      if (raw.trim().startsWith('```')) {
+        if (i < lines.length - 1) spans.add(const TextSpan(text: '\n'));
+        continue;
+      }
+      final heading = RegExp(r'^#{1,6}\s+').firstMatch(raw);
+      final bullet = RegExp(r'^\s*[-*+]\s+').firstMatch(raw);
+      final numbered = RegExp(r'^\s*\d+[.)]\s+').firstMatch(raw);
+      var line = raw;
+      TextStyle? lineStyle;
+      if (heading != null) {
+        line = raw.substring(heading.end);
+        lineStyle = const TextStyle(fontWeight: FontWeight.w700, fontSize: 14);
+      } else if (bullet != null) {
+        line = '• ${raw.substring(bullet.end)}';
+      } else if (numbered != null) {
+        line = raw;
+      }
+      spans.addAll(_inlineMarkdown(line, lineStyle));
+      if (i < lines.length - 1) spans.add(const TextSpan(text: '\n'));
+    }
+    return RichText(
+      text: TextSpan(
+        style: const TextStyle(
+          color: AppColors.onSurface,
+          fontSize: 13,
+          height: 1.45,
+        ),
+        children: spans,
+      ),
+    );
+  }
+
+  List<TextSpan> _inlineMarkdown(String value, TextStyle? lineStyle) {
+    final spans = <TextSpan>[];
+    final pattern = RegExp(
+      r'\*\*\*(.+?)\*\*\*|(\*\*|__)(.+?)\2|(?<!\*)\*([^*]+)\*(?!\*)|`([^`]+)`|\$([^$]+)\$',
+    );
+    var cursor = 0;
+    for (final match in pattern.allMatches(value)) {
+      if (match.start > cursor) {
+        spans.add(
+          TextSpan(
+            text: value.substring(cursor, match.start),
+            style: lineStyle,
+          ),
+        );
+      }
+      final boldItalic = match.group(1);
+      final bold = match.group(3);
+      final italic = match.group(4);
+      final code = match.group(5);
+      final math = match.group(6);
+      spans.add(
+        TextSpan(
+          text: boldItalic ?? bold ?? italic ?? code ?? math,
+          style:
+              lineStyle?.copyWith(
+                fontWeight: boldItalic != null || bold != null
+                    ? FontWeight.w700
+                    : lineStyle.fontWeight,
+                fontStyle: boldItalic != null || italic != null
+                    ? FontStyle.italic
+                    : lineStyle.fontStyle,
+              ) ??
+              (boldItalic != null
+                  ? const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontStyle: FontStyle.italic,
+                    )
+                  : bold != null
+                  ? const TextStyle(fontWeight: FontWeight.w700)
+                  : italic != null
+                  ? const TextStyle(fontStyle: FontStyle.italic)
+                  : const TextStyle(
+                      color: AppColors.secondary,
+                      fontFamily: 'monospace',
+                    )),
+        ),
+      );
+      cursor = match.end;
+    }
+    if (cursor < value.length) {
+      spans.add(TextSpan(text: value.substring(cursor), style: lineStyle));
+    }
+    return spans;
   }
 }
 
@@ -2681,6 +2922,8 @@ class _FullScreenChordSheet extends StatelessWidget {
   final String? content;
   final String? sourceId;
   final bool browser;
+  final AudioPlayer player;
+  final String? artworkUrl;
 
   const _FullScreenChordSheet({
     required this.title,
@@ -2689,6 +2932,8 @@ class _FullScreenChordSheet extends StatelessWidget {
     required this.content,
     required this.sourceId,
     required this.browser,
+    required this.player,
+    this.artworkUrl,
   });
 
   @override
@@ -2730,12 +2975,24 @@ class _FullScreenChordSheet extends StatelessWidget {
         child: browser || content?.isNotEmpty != true
             ? _TabWebView(url: url)
             : SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(8, 12, 8, 32),
+                padding: const EdgeInsets.fromLTRB(8, 12, 8, 92),
                 child: _ExpandedChordSheet(
                   content: content!,
                   sourceId: sourceId,
                 ),
               ),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 84,
+          child: SongPlayBar(
+            player: player,
+            title: title,
+            artworkUrl: artworkUrl,
+            compact: true,
+          ),
+        ),
       ),
     );
   }
