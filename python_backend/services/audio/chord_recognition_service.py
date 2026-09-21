@@ -268,6 +268,7 @@ class ChordRecognitionService:
             
             total_time = time.time() - start_time
             result['total_processing_time'] = total_time
+
             
             # Cleanup Spleeter files if used
             if spleeter_info and spleeter_info.get("used"):

@@ -1,6 +1,7 @@
 """Combined audio-analysis endpoint used by the analyzed-song page."""
 
 import os
+import time
 import traceback
 import logging
 from contextlib import contextmanager
@@ -30,6 +31,7 @@ def analyze_audio():
     The service responses are normalized into the small timeline contract used
     by the client. Model-internal fields stay inside the backend.
     """
+    started_at = time.perf_counter()
     uploaded_file = request.files.get("file")
     youtube_url = (request.form.get("youtube_url") or "").strip()
     if request.is_json:
@@ -154,6 +156,7 @@ def analyze_audio():
             ),
             "beat_model": beat_result.get("model_name") or beat_result.get("model_used"),
             "chord_model": chord_result.get("model_name") or chord_result.get("model_used"),
+            "analysis_time": round(time.perf_counter() - started_at, 3),
             # Index N is the chord at beat N. Empty strings represent N/no chord.
             "chords_by_beat": chords_by_beat,
         }

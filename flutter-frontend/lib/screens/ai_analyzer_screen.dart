@@ -318,7 +318,6 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      extendBody: true,
       appBar: _buildAppBar(),
       body: AnimatedSwitcher(
         duration: const Duration(milliseconds: 350),
@@ -333,23 +332,8 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
               isPlaying: _isPlaying,
               onPlayPause: _togglePlayback,
               title: _result!.title,
-              artist: _result!.artist,
+              artworkUrl: _result!.artworkUrl,
             ),
-          SafeArea(
-            top: false,
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: _runTestAudio,
-                icon: const Icon(Icons.science_outlined, size: 15),
-                label: const Text('TEST'),
-                style: TextButton.styleFrom(
-                  foregroundColor: AppColors.tertiary,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                ),
-              ),
-            ),
-          ),
           AppBottomNavBar(
             currentIndex: 2,
             onTap: (i) {
@@ -1133,7 +1117,7 @@ class _ResultsView extends StatelessWidget {
     final saved = context.watch<AppState>().isSaved(result);
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 100),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1159,59 +1143,60 @@ class _ResultsView extends StatelessWidget {
                       color: AppColors.outlineVariant.withOpacity(0.3),
                     ),
                   ),
-                  child: const Icon(
-                    Icons.album_rounded,
-                    color: AppColors.primary,
-                    size: 28,
-                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: result.artworkUrl?.isNotEmpty == true
+                      ? Image.network(
+                          result.artworkUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Icon(
+                            Icons.album_rounded,
+                            color: AppColors.primary,
+                            size: 28,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.album_rounded,
+                          color: AppColors.primary,
+                          size: 28,
+                        ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Text(
-                            result.title,
-                            style: GoogleFonts.sora(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.onSurface,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(6),
-                              color: AppColors.secondary.withOpacity(0.1),
-                              border: Border.all(
-                                color: AppColors.secondary.withOpacity(0.3),
-                              ),
-                            ),
-                            child: Text(
-                              result.confidencePercent,
-                              style: GoogleFonts.spaceGrotesk(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.secondary,
-                              ),
-                            ),
-                          ),
-                        ],
+                      Text(
+                        result.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.sora(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.onSurface,
+                        ),
                       ),
                       Text(
-                        '${result.artist} • ${result.album}',
+                        result.artist,
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 12,
                           color: AppColors.onSurfaceVariant,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 5),
+                      Row(
+                        children: [
+                          _TrackMetric(
+                            label: 'BPM',
+                            value: result.bpm > 0 ? '${result.bpm}' : '—',
+                          ),
+                          const SizedBox(width: 12),
+                          _TrackMetric(
+                            label: 'TIME',
+                            value: result.timeSig,
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -1250,26 +1235,39 @@ class _ResultsView extends StatelessWidget {
           ),
           const SizedBox(height: 14),
 
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Ask AI is coming soon.')),
+              ),
+              icon: const Icon(Icons.auto_awesome_rounded, size: 19),
+              label: Text(
+                'ASK AI ABOUT THIS SONG',
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.secondary,
+                side: BorderSide(color: AppColors.secondary.withOpacity(0.45)),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+
           // The beat/chord grid is the primary analysis result.
           _ChordProgressionCard(result: result, player: player),
           const SizedBox(height: 14),
 
-          // Key + Rhythm bento
-          Row(
-            children: [
-              Expanded(child: _HarmonicCard(result: result)),
-              const SizedBox(width: 12),
-              Expanded(child: _RhythmCard(result: result)),
-            ],
-          ),
-          const SizedBox(height: 14),
-
           _AnalysisDetailsCard(result: result),
           const SizedBox(height: 14),
-
-          // Mood tags
-          _MoodTagsCard(result: result),
-          const SizedBox(height: 16),
 
           // Action buttons
           Row(
@@ -1365,6 +1363,38 @@ class _ResultsView extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrackMetric extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _TrackMetric({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return RichText(
+      text: TextSpan(
+        children: [
+          TextSpan(
+            text: '$value ',
+            style: GoogleFonts.spaceGrotesk(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: AppColors.primary,
+            ),
+          ),
+          TextSpan(
+            text: label,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 10,
+              color: AppColors.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -1604,15 +1634,10 @@ class _ChordProgressionCard extends StatelessWidget {
         color: AppColors.surfaceContainerLow.withOpacity(0.9),
         border: Border.all(color: AppColors.outlineVariant.withOpacity(0.2)),
       ),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: true,
-          tilePadding: EdgeInsets.zero,
-          childrenPadding: EdgeInsets.zero,
-          iconColor: AppColors.primary,
-          collapsedIconColor: AppColors.outline,
-          title: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
               const Icon(
                 Icons.grid_view_rounded,
@@ -1620,81 +1645,53 @@ class _ChordProgressionCard extends StatelessWidget {
                 size: 17,
               ),
               const SizedBox(width: 8),
-              Text(
-                'BEAT & CHORD GRID',
-                style: GoogleFonts.spaceGrotesk(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.onSurface,
-                  letterSpacing: 1.0,
+              Expanded(
+                child: Text(
+                  'CHORD GRID',
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.onSurface,
+                    letterSpacing: 1.0,
+                  ),
                 ),
+              ),
+              IconButton(
+                tooltip: 'Open full screen',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => _FullScreenChordGrid(
+                      result: result,
+                      player: player,
+                    ),
+                  ),
+                ),
+                icon: const Icon(Icons.open_in_full_rounded, size: 18),
+                color: AppColors.primary,
               ),
             ],
           ),
-          subtitle: Text(
-            '${result.timeSig} • ${result.bpm > 0 ? '${result.bpm} BPM' : 'tempo unavailable'}',
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 11,
-              color: AppColors.onSurfaceVariant,
-            ),
-          ),
-          children: [
-            if (result.chordSegments.isEmpty &&
-                result.chords.isEmpty &&
-                result.chordsByBeat.every((chord) => chord.isEmpty))
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'No chords detected',
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 13,
-                    color: AppColors.onSurfaceVariant,
-                  ),
-                ),
-              )
-            else if (result.chordSegments.isNotEmpty ||
-                result.chordsByBeat.isNotEmpty)
-              _ChordTimelineGrid(result: result, player: player)
-            else
-              Row(
-                children: result.chords.map((chord) {
-                  final idx = result.chords.indexOf(chord);
-                  final colors = [
-                    AppColors.primary,
-                    AppColors.secondary,
-                    AppColors.tertiary,
-                    AppColors.primaryFixedDim,
-                  ];
-                  final color = colors[idx % colors.length];
-                  return Expanded(
-                    child: Container(
-                      margin: EdgeInsets.only(
-                        right: idx < result.chords.length - 1 ? 8 : 0,
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(10),
-                        color: color.withOpacity(0.1),
-                        border: Border.all(color: color.withOpacity(0.3)),
-                      ),
-                      child: Text(
-                        chord,
-                        style: GoogleFonts.sora(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: color,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  );
-                }).toList(),
+          const SizedBox(height: 10),
+          if (_hasChordData)
+            _ChordTimelineGrid(result: result, player: player)
+          else
+            Text(
+              'No chords detected',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 13,
+                color: AppColors.onSurfaceVariant,
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }
+
+  bool get _hasChordData =>
+      result.chordSegments.isNotEmpty ||
+      result.chordsByBeat.isNotEmpty ||
+      result.chords.isNotEmpty;
 }
 
 class _ChordTimelineGrid extends StatelessWidget {
@@ -1720,9 +1717,21 @@ class _ChordTimelineGrid extends StatelessWidget {
     final position = positionMilliseconds / 1000;
     final beats = result.beats.isNotEmpty
         ? result.beats
-        : result.chordSegments.map((segment) => segment.start).toList();
+        : result.chordSegments.isNotEmpty
+        ? result.chordSegments.map((segment) => segment.start).toList()
+        : List<double>.generate(
+            result.chordsByBeat.isNotEmpty
+                ? result.chordsByBeat.length
+                : result.chords.length,
+            (index) => index * _fallbackBeatLength,
+          );
     final beatsPerBar = int.tryParse(result.timeSig.split('/').first) ?? 4;
-    const beatsPerRow = 8;
+    final beatsPerRow = switch (beatsPerBar) {
+      3 => 9,
+      4 => 8,
+      6 => 6,
+      _ => beatsPerBar > 0 ? beatsPerBar * 2 : 8,
+    };
     final chordChanges = List<String?>.filled(beats.length, null);
     if (result.chordsByBeat.length == beats.length) {
       for (var index = 0; index < beats.length; index++) {
@@ -1743,7 +1752,7 @@ class _ChordTimelineGrid extends StatelessWidget {
         chordChanges[nearestBeat] = segment.chord == 'N' ? '' : segment.chord;
       }
     }
-    final cells = <_ChordGridCell>[];
+    final cells = <_ChordGridCellData>[];
     var currentChord = '';
     var previousDisplayedChord = '';
     for (var index = 0; index < beats.length; index++) {
@@ -1757,9 +1766,9 @@ class _ChordTimelineGrid extends StatelessWidget {
       previousDisplayedChord = currentChord;
       final nextBeat = index + 1 < beats.length
           ? beats[index + 1]
-          : result.duration;
+          : (result.duration > time ? result.duration : time + _fallbackBeatLength);
       cells.add(
-        _ChordGridCell(
+        _ChordGridCellData(
           chord: displayChord,
           active: position >= time && position < nextBeat,
           onTap: () =>
@@ -1767,97 +1776,151 @@ class _ChordTimelineGrid extends StatelessWidget {
         ),
       );
     }
-    final bars = <List<_ChordGridCell>>[];
+    final bars = <List<_ChordGridCellData>>[];
     for (var index = 0; index < cells.length; index += beatsPerRow) {
       bars.add(
         cells.sublist(index, (index + beatsPerRow).clamp(0, cells.length)),
       );
     }
 
+    if (bars.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceContainer,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Text(
+          'No chord timeline available',
+          textAlign: TextAlign.center,
+          style: GoogleFonts.plusJakartaSans(
+            color: AppColors.onSurfaceVariant,
+            fontSize: 13,
+          ),
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'BEAT-BY-BEAT TIMELINE',
-          style: GoogleFonts.spaceGrotesk(
-            fontSize: 9,
-            fontWeight: FontWeight.w600,
-            color: AppColors.outline,
-            letterSpacing: 1.0,
-          ),
-        ),
-        const SizedBox(height: 8),
         ...bars.asMap().entries.map((entry) {
           final bar = entry.value;
           return Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Row(
-              children: [
-                for (var index = 0; index < bar.length; index++)
-                  Expanded(
-                    child: Container(
-                      padding: EdgeInsets.only(
-                        right: index == bar.length - 1 ? 0 : 4,
-                      ),
-                      decoration:
-                          (index + 1) % beatsPerBar == 0 &&
-                              index != bar.length - 1
-                          ? BoxDecoration(
-                              border: Border(
-                                right: BorderSide(
-                                  color: AppColors.outlineVariant.withOpacity(
-                                    0.75,
-                                  ),
-                                  width: 1.5,
-                                ),
-                              ),
-                            )
-                          : null,
-                      child: bar[index],
-                    ),
-                  ),
-              ],
+            padding: EdgeInsets.only(
+              bottom: entry.key == bars.length - 1 ? 0 : 8,
+            ),
+            child: _ChordGridRow(
+              cells: bar,
+              beatsPerBar: beatsPerBar,
+              beatsPerLine: beatsPerRow,
             ),
           );
         }),
-        const SizedBox(height: 8),
-        Text(
-          '${result.chordSegments.length} chord segments • ${result.beats.length} beats • ${result.downbeats.length} downbeats',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 10,
-            color: AppColors.outline,
-          ),
-        ),
       ],
+    );
+  }
+
+  static const _fallbackBeatLength = 0.5;
+}
+
+class _ChordGridCellData {
+  final String chord;
+  final bool active;
+  final VoidCallback? onTap;
+
+  const _ChordGridCellData({
+    required this.chord,
+    this.active = false,
+    this.onTap,
+  });
+}
+
+class _ChordGridRow extends StatelessWidget {
+  final List<_ChordGridCellData> cells;
+  final int beatsPerBar;
+  final int beatsPerLine;
+
+  const _ChordGridRow({
+    required this.cells,
+    required this.beatsPerBar,
+    required this.beatsPerLine,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const gap = 4.0;
+        const dividerWidth = 1.0;
+        const dividerSpace = 3.0;
+        final dividerCount = beatsPerBar > 0
+            ? ((beatsPerLine - 1) / beatsPerBar).floor()
+            : 0;
+        final totalSpacing =
+            gap * (beatsPerLine - 1) +
+            (dividerWidth + dividerSpace * 2) * dividerCount;
+        final cellSize = (constraints.maxWidth - totalSpacing)
+            .clamp(0.0, double.infinity)
+            .toDouble() /
+            beatsPerLine;
+
+        return SizedBox(
+          height: cellSize,
+          child: Row(
+            children: [
+              for (var index = 0; index < cells.length; index++) ...[
+                if (index > 0)
+                  index % beatsPerBar == 0
+                      ? Container(
+                          width: dividerWidth,
+                          height: cellSize * 0.8,
+                          margin: const EdgeInsets.symmetric(
+                            horizontal: dividerSpace,
+                          ),
+                          color: AppColors.secondary.withOpacity(0.7),
+                        )
+                      : const SizedBox(width: gap),
+                SizedBox(
+                  width: cellSize,
+                  height: cellSize,
+                  child: _ChordGridCell(cell: cells[index]),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }
 
 class _ChordGridCell extends StatelessWidget {
-  final String chord;
-  final bool active;
-  final VoidCallback? onTap;
+  final _ChordGridCellData cell;
 
-  const _ChordGridCell({required this.chord, this.active = false, this.onTap});
+  const _ChordGridCell({required this.cell});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: cell.onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+        width: double.infinity,
+        height: double.infinity,
+        alignment: Alignment.center,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(7),
-          color: active
+          color: cell.active
               ? AppColors.primary.withOpacity(0.35)
               : AppColors.primary.withOpacity(0.12),
           border: Border.all(
-            color: active
+            color: cell.active
                 ? AppColors.secondary
                 : AppColors.primary.withOpacity(0.35),
-            width: active ? 2 : 1,
+            width: cell.active ? 2 : 1,
           ),
-          boxShadow: active
+          boxShadow: cell.active
               ? [
                   BoxShadow(
                     color: AppColors.primary.withOpacity(0.35),
@@ -1866,22 +1929,85 @@ class _ChordGridCell extends StatelessWidget {
                 ]
               : null,
         ),
-        child: Column(
-          children: [
-            if (chord.isEmpty)
-              const SizedBox(height: 18)
-            else
-              Text(
-                chord,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.sora(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: active ? AppColors.secondary : AppColors.primary,
-                ),
-              ),
-          ],
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            cell.chord,
+            maxLines: 1,
+            softWrap: false,
+            style: GoogleFonts.sora(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: cell.active ? AppColors.secondary : AppColors.primary,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FullScreenChordGrid extends StatelessWidget {
+  final TrackResult result;
+  final AudioPlayer player;
+
+  const _FullScreenChordGrid({required this.result, required this.player});
+
+  @override
+  Widget build(BuildContext context) {
+    Future<void> togglePlayback() async {
+      if (player.playing) {
+        await player.pause();
+      } else {
+        if (player.processingState == ProcessingState.completed) {
+          await player.seek(Duration.zero);
+        }
+        await player.play();
+      }
+    }
+
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: AppColors.surface,
+        title: Text(
+          result.title,
+          style: GoogleFonts.sora(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: AppColors.onSurface,
+          ),
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Close chord grid',
+            onPressed: () => Navigator.pop(context),
+            color: AppColors.onSurface,
+            icon: const Icon(Icons.close_rounded),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(12, 16, 12, 120),
+          child: _ChordTimelineGrid(result: result, player: player),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 104,
+          child: StreamBuilder<PlayerState>(
+            stream: player.playerStateStream,
+            initialData: player.playerState,
+            builder: (context, snapshot) => _AnalysisMiniPlayer(
+              player: player,
+              isPlaying: snapshot.data?.playing ?? player.playing,
+              onPlayPause: togglePlayback,
+              title: result.title,
+              artworkUrl: result.artworkUrl,
+            ),
+          ),
         ),
       ),
     );
@@ -1916,11 +2042,30 @@ class _AnalysisDetailsCard extends StatelessWidget {
           const SizedBox(height: 10),
           _dataLine('Beat model', result.beatModel),
           _dataLine('Chord model', result.chordModel),
-          _dataLine('Duration', '${result.duration.toStringAsFixed(1)} sec'),
-          _dataLine('Time signature', result.timeSig),
+          if (_analysisTime(result.analysisData) case final seconds?)
+            _dataLine('Analysis time', '${seconds.toStringAsFixed(2)} sec'),
         ],
       ),
     );
+  }
+
+  double? _analysisTime(Map<String, dynamic> data) {
+    for (final key in const [
+      'analysis_time',
+      'total_processing_time',
+      'processing_time',
+      'elapsed_time',
+    ]) {
+      final value = data[key];
+      if (value is num && value > 0) return value.toDouble();
+    }
+    for (final value in data.values) {
+      if (value is Map) {
+        final nested = _analysisTime(value.cast<String, dynamic>());
+        if (nested != null) return nested;
+      }
+    }
+    return null;
   }
 
   Widget _dataLine(String label, String value) {
@@ -1957,40 +2102,59 @@ class _AnalysisMiniPlayer extends StatelessWidget {
   final bool isPlaying;
   final VoidCallback onPlayPause;
   final String title;
-  final String artist;
+  final String? artworkUrl;
 
   const _AnalysisMiniPlayer({
     required this.player,
     required this.isPlaying,
     required this.onPlayPause,
     required this.title,
-    required this.artist,
+    required this.artworkUrl,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      margin: const EdgeInsets.all(8),
+      padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
       decoration: BoxDecoration(
         color: AppColors.surfaceContainerHigh,
-        border: Border(
-          top: BorderSide(color: AppColors.primary.withOpacity(0.35)),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: AppColors.primary.withOpacity(0.2),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.22),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Row(
         children: [
           Container(
-            width: 42,
-            height: 42,
+            width: 34,
+            height: 34,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(10),
               color: AppColors.primary.withOpacity(0.14),
               border: Border.all(color: AppColors.primary.withOpacity(0.35)),
             ),
-            child: const Icon(
-              Icons.music_note_rounded,
-              color: AppColors.primary,
-            ),
+            clipBehavior: Clip.antiAlias,
+            child: artworkUrl?.isNotEmpty == true
+                ? Image.network(
+                    artworkUrl!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(
+                      Icons.music_note_rounded,
+                      color: AppColors.primary,
+                    ),
+                  )
+                : const Icon(
+                    Icons.music_note_rounded,
+                    color: AppColors.primary,
+                  ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -2000,19 +2164,12 @@ class _AnalysisMiniPlayer extends StatelessWidget {
                 Text(
                   title,
                   style: GoogleFonts.sora(
-                    fontSize: 13,
+                    fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: AppColors.onSurface,
                   ),
                 ),
-                Text(
-                  artist.isEmpty ? 'Analyzed audio' : artist,
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 11,
-                    color: AppColors.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 2),
                 StreamBuilder<Duration>(
                   stream: player.positionStream,
                   initialData: player.position,
@@ -2031,12 +2188,34 @@ class _AnalysisMiniPlayer extends StatelessWidget {
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            LinearProgressIndicator(
-                              minHeight: 2,
-                              value: progress,
-                              backgroundColor: AppColors.outlineVariant
-                                  .withOpacity(0.25),
-                              color: AppColors.primary,
+                            SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 2,
+                                thumbShape: const RoundSliderThumbShape(
+                                  enabledThumbRadius: 5,
+                                ),
+                                overlayShape: const RoundSliderOverlayShape(
+                                  overlayRadius: 10,
+                                ),
+                                activeTrackColor: AppColors.primary,
+                                inactiveTrackColor: AppColors.outlineVariant
+                                    .withOpacity(0.25),
+                                thumbColor: AppColors.primary,
+                              ),
+                              child: Slider(
+                                min: 0,
+                                max: 1,
+                                value: progress,
+                                onChanged: duration.inMilliseconds == 0
+                                    ? null
+                                    : (value) => player.seek(
+                                        Duration(
+                                          milliseconds: (value *
+                                                  duration.inMilliseconds)
+                                              .round(),
+                                        ),
+                                      ),
+                              ),
                             ),
                             const SizedBox(height: 3),
                             Text(
@@ -2056,6 +2235,7 @@ class _AnalysisMiniPlayer extends StatelessWidget {
             ),
           ),
           IconButton(
+            visualDensity: VisualDensity.compact,
             onPressed: onPlayPause,
             icon: Icon(
               isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
