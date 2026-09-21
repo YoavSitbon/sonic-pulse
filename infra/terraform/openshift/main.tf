@@ -4,6 +4,15 @@ locals {
     managed-by  = "terraform"
     environment = "openshift"
   }
+
+  env_lines = fileexists(var.env_file) ? split("\n", file(var.env_file)) : []
+  env_entries = [
+    for line in local.env_lines : regex("^\\s*(?:export\\s+)?([^=\\s]+)\\s*=\\s*(.*)\\s*$", line)
+    if trimspace(line) != "" && !startswith(trimspace(line), "#") && can(regex("^\\s*(?:export\\s+)?([^=\\s]+)\\s*=\\s*(.*)\\s*$", line))
+  ]
+  runtime_secret_env = {
+    for entry in local.env_entries : entry[0] => entry[1]
+  }
 }
 
 resource "kubernetes_namespace_v1" "sonic_pulse" {
@@ -44,7 +53,7 @@ resource "kubernetes_secret_v1" "runtime" {
   type = "Opaque"
 
   data = {
-    MUSIC_AI_API_KEY = ""
+    for key, value in local.runtime_secret_env : key => value
   }
 }
 
@@ -141,7 +150,12 @@ resource "kubernetes_deployment_v1" "api" {
     replicas = var.api_replicas
     selector { match_labels = { component = "api" } }
     template {
-      metadata { labels = { component = "api" } }
+      metadata {
+        labels = { component = "api" }
+        annotations = {
+          "sonic-pulse/runtime-secret-hash" = sha256(jsonencode(local.runtime_secret_env))
+        }
+      }
       spec {
         dynamic "image_pull_secrets" {
           for_each = var.image_pull_secret_name == null ? [] : [var.image_pull_secret_name]
@@ -152,7 +166,7 @@ resource "kubernetes_deployment_v1" "api" {
         container {
           name              = "api"
           image             = var.api_image
-          image_pull_policy = "IfNotPresent"
+          image_pull_policy = var.image_pull_policy
           port {
             name           = "http"
             container_port = 8080
@@ -231,7 +245,7 @@ resource "kubernetes_deployment_v1" "chord" {
         container {
           name              = "chord-service"
           image             = var.chord_image
-          image_pull_policy = "IfNotPresent"
+          image_pull_policy = var.image_pull_policy
           port {
             name           = "http"
             container_port = 8080
@@ -270,8 +284,8 @@ resource "kubernetes_deployment_v1" "chord" {
             period_seconds        = 30
           }
           resources {
-            requests = { cpu = "2.5", memory = "6Gi" }
-            limits   = { cpu = "10", memory = "6Gi" }
+            requests = { cpu = "2.5", memory = "3Gi" }
+            limits   = { cpu = "10", memory = "3Gi" }
           }
         }
       }
@@ -298,7 +312,7 @@ resource "kubernetes_deployment_v1" "beat" {
         container {
           name              = "beat-service"
           image             = var.beat_image
-          image_pull_policy = "IfNotPresent"
+          image_pull_policy = var.image_pull_policy
           port {
             name           = "http"
             container_port = 8080
@@ -337,8 +351,8 @@ resource "kubernetes_deployment_v1" "beat" {
             period_seconds        = 30
           }
           resources {
-            requests = { cpu = "1500m", memory = "6Gi" }
-            limits   = { cpu = "6", memory = "6Gi" }
+            requests = { cpu = "1500m", memory = "3Gi" }
+            limits   = { cpu = "6", memory = "3Gi" }
           }
         }
       }
@@ -369,7 +383,7 @@ resource "kubernetes_deployment_v1" "qwen" {
         container {
           name              = "qwen"
           image             = var.qwen_image
-          image_pull_policy = "IfNotPresent"
+          image_pull_policy = var.image_pull_policy
           command           = ["vllm"]
           args              = ["serve", var.qwen_model, "--host", "0.0.0.0", "--port", "8000", "--served-model-name", var.qwen_served_model, "--max-model-len", tostring(var.qwen_max_model_len)]
           port {
@@ -427,8 +441,9 @@ resource "kubernetes_deployment_v1" "redis" {
       metadata { labels = { component = "redis" } }
       spec {
         container {
-          name  = "redis"
-          image = var.redis_image
+          name              = "redis"
+          image             = var.redis_image
+          image_pull_policy = var.image_pull_policy
           port {
             name           = "redis"
             container_port = 6379
@@ -459,7 +474,6 @@ resource "kubernetes_manifest" "api_route" {
       {
         to   = { kind = "Service", name = kubernetes_service_v1.api.metadata[0].name }
         port = { targetPort = "http" }
-        tls  = { termination = "edge", insecureEdgeTerminationPolicy = "Redirect" }
       },
       var.api_route_host == null ? {} : { host = var.api_route_host }
     )

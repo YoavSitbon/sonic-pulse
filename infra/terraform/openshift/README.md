@@ -11,6 +11,11 @@ This stack deploys the first microservice split:
 The API is the only public service. Chord, beat, Redis, and Qwen are internal
 Kubernetes Services. The API routes chord requests through `CHORD_SERVICE_URL`
 and beat requests through `BEAT_SERVICE_URL`.
+The OpenShift API Route is intentionally HTTP-only, and image pulling defaults
+to `Always` for every deployment.
+Runtime values are loaded from the local `env_file` (by default
+`../../../python_backend/.env`) into the Kubernetes Secret. The file is not
+committed; set `env_file` to another ignored dotenv file if needed.
 
 ## Build images
 

@@ -109,3 +109,19 @@ variable "image_pull_secret_name" {
   type    = string
   default = null
 }
+
+variable "image_pull_policy" {
+  type    = string
+  default = "Always"
+
+  validation {
+    condition     = contains(["Always", "IfNotPresent", "Never"], var.image_pull_policy)
+    error_message = "image_pull_policy must be Always, IfNotPresent, or Never."
+  }
+}
+
+variable "env_file" {
+  type        = string
+  default     = "../../../python_backend/.env"
+  description = "Path to the local dotenv file whose values are loaded into the runtime Secret."
+}
