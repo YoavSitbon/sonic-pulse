@@ -297,6 +297,32 @@ class RecognitionService {
     }
   }
 
+  Future<String> refreshYouTubeAudioUrl(String youtubeUrl) async {
+    final response = await http
+        .post(
+          Uri.parse('${ApiConfig.baseUrl}${ApiConfig.youtubeAudioEndpoint}'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'youtube_url': youtubeUrl}),
+        )
+        .timeout(ApiConfig.requestTimeout);
+    try {
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode != 200 || json['success'] != true) {
+        throw RecognitionException(
+          json['error']?.toString() ?? 'Could not refresh YouTube audio.',
+        );
+      }
+      final audioUrl = json['audio_url']?.toString() ?? '';
+      if (audioUrl.isEmpty) {
+        throw const RecognitionException('No playable YouTube audio found.');
+      }
+      return audioUrl;
+    } catch (e) {
+      if (e is RecognitionException) rethrow;
+      throw RecognitionException('Could not refresh YouTube audio: $e');
+    }
+  }
+
   String _serverError(http.Response response) {
     try {
       final json = jsonDecode(response.body) as Map<String, dynamic>;

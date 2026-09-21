@@ -9,6 +9,7 @@ import time
 import numpy as np
 from typing import Dict, Any, List
 from utils.logging import log_info, log_error, log_debug
+from services.audio.time_signature import infer_time_signature
 
 
 class MadmomDetectorService:
@@ -93,13 +94,6 @@ class MadmomDetectorService:
             beat_tracker = DBNBeatTrackingProcessor(fps=100)
             beat_times = beat_tracker(beat_activation)
 
-            # Heuristic downbeat candidates: assume either 3 or 4 beats per bar
-            downbeats4 = beat_times[::4]
-            downbeats3 = beat_times[::3]
-
-            # For backward compatibility, expose a default downbeats array (4/4)
-            downbeat_times = downbeats4
-
             # Calculate BPM
             bpm = 120.0  # Default
             if len(beat_times) > 1:
@@ -110,34 +104,35 @@ class MadmomDetectorService:
             # Get audio duration
             y, sr = librosa.load(file_path, sr=None)
             duration = librosa.get_duration(y=y, sr=sr)
-
-            # Time signature will be selected on the frontend via heuristic comparison of candidates.
-            # Keep a backward-compatible placeholder; default to 4/4 here.
-            # (Frontend will override and cache the selected meter.)
+            time_signature, meter_confidence, downbeat_candidates = infer_time_signature(
+                beat_times, y, sr
+            )
+            beats_per_bar = int(time_signature.split('/')[0])
+            downbeat_times = beat_times[::beats_per_bar]
 
             processing_time = time.time() - start_time
 
             log_info(
                 f"Madmom detection successful: {len(beat_times)} beats, "
-                f"{len(downbeat_times)} default-downbeats (4/4), candidates: 3/4={len(downbeats3)}, 4/4={len(downbeats4)}"
+                f"{len(downbeat_times)} downbeats ({time_signature}), "
+                f"meter confidence={meter_confidence:.2f}"
             )
 
             return {
                 "success": True,
                 "beats": beat_times.tolist() if hasattr(beat_times, 'tolist') else list(beat_times),
                 "downbeats": downbeat_times.tolist() if hasattr(downbeat_times, 'tolist') else list(downbeat_times),
-                "downbeat_candidates": {
-                    "3": downbeats3.tolist() if hasattr(downbeats3, 'tolist') else list(downbeats3),
-                    "4": downbeats4.tolist() if hasattr(downbeats4, 'tolist') else list(downbeats4),
-                },
+                "downbeat_candidates": downbeat_candidates,
                 "downbeat_candidates_meta": {
-                    "default": 4,
-                    "strategy": "heuristic_slices_from_beats"
+                    "selected": time_signature,
+                    "confidence": meter_confidence,
+                    "strategy": "beat_accent_meter_inference"
                 },
                 "total_beats": len(beat_times),
                 "total_downbeats": len(downbeat_times),
                 "bpm": float(bpm),
-                "time_signature": "4/4",
+                "time_signature": time_signature,
+                "time_signature_confidence": meter_confidence,
                 "duration": float(duration),
                 "model_used": "madmom",
                 "model_name": "Madmom",
@@ -154,4 +149,3 @@ class MadmomDetectorService:
                 "model_name": "Madmom",
                 "processing_time": time.time() - start_time
             }
-

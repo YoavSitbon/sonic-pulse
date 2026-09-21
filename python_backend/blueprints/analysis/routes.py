@@ -14,6 +14,7 @@ from extensions import limiter
 from config import get_config
 from services.audio.tempfiles import temporary_file
 from services.youtube.youtube_search_service import YouTubeSearchService
+from services.music_theory_engine import MusicTheoryEngine
 from utils.logging import log_error, log_info
 
 
@@ -21,6 +22,7 @@ analysis_bp = Blueprint("analysis", __name__)
 config = get_config()
 logger = logging.getLogger(__name__)
 youtube_service = YouTubeSearchService()
+theory_engine = MusicTheoryEngine()
 
 
 @analysis_bp.post("/api/analyze-audio")
@@ -144,12 +146,34 @@ def analyze_audio():
             beat_result.get("beats", []),
             chord_result.get("chords", []),
         )
+        key = chord_result.get("key")
+        key_confidence = chord_result.get("key_confidence", 0.0)
+        key_analysis = chord_result.get("key_analysis", {})
+        if not key or key == "—":
+            recognized_chords = [
+                item.get("chord") if isinstance(item, dict) else item
+                for item in (chord_result.get("chords") or [])
+            ]
+            theory = theory_engine.build({"chords": recognized_chords})
+            key = theory.get("likely_key") or "—"
+            key_confidence = theory.get("key_confidence", 0.0)
+            key_analysis = {
+                "normalized_chords": theory.get("normalized_chords", []),
+                "roman_numerals": theory.get("roman_numerals", []),
+                "unique_chords": theory.get("unique_chords", []),
+            }
         response = {
             "success": success,
             "beats": beat_result.get("beats", []),
             "downbeats": beat_result.get("downbeats", []),
             "bpm": beat_result.get("bpm", 0),
             "time_signature": beat_result.get("time_signature", "—"),
+            "time_signature_confidence": beat_result.get(
+                "time_signature_confidence", 0.0
+            ),
+            "key": key,
+            "key_confidence": key_confidence,
+            "key_analysis": key_analysis,
             "duration": max(
                 float(beat_result.get("duration", 0) or 0),
                 float(chord_result.get("duration", 0) or 0),
@@ -184,6 +208,24 @@ def analyze_audio():
     finally:
         if youtube_audio_path:
             youtube_service.cleanup(os.path.dirname(youtube_audio_path))
+
+
+@analysis_bp.post("/api/youtube-audio")
+@limiter.limit(config.get_rate_limit("light_processing"))
+def refresh_youtube_audio():
+    """Return a fresh playable stream URL for a previously analyzed video."""
+    payload = request.get_json(silent=True) or {}
+    youtube_url = (payload.get("youtube_url") or "").strip()
+    if not youtube_url:
+        return jsonify({"success": False, "error": "Missing YouTube URL."}), 400
+    try:
+        audio_url = youtube_service.get_audio_url(youtube_url)
+        if not audio_url:
+            return jsonify({"success": False, "error": "No playable audio stream found."}), 502
+        return jsonify({"success": True, "audio_url": audio_url})
+    except Exception as exc:
+        log_error(f"Failed to refresh YouTube audio URL: {exc}")
+        return jsonify({"success": False, "error": "Could not refresh YouTube audio."}), 502
 
 
 @contextmanager

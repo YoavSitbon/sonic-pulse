@@ -14,6 +14,7 @@ from services.detectors.btc_sl_detector import BTCSLDetectorService
 from services.detectors.btc_pl_detector import BTCPLDetectorService
 from services.audio.audio_utils import validate_audio_file, get_audio_duration
 from services.audio.spleeter_service import SpleeterService
+from services.music_theory_engine import MusicTheoryEngine
 from utils.chord_mappings import (
     get_supported_chord_dicts, 
     get_default_chord_dict, 
@@ -44,6 +45,7 @@ class ChordRecognitionService:
         
         # Initialize Spleeter service
         self.spleeter_service = SpleeterService()
+        self.theory_engine = MusicTheoryEngine()
     
     def get_available_detectors(self) -> List[str]:
         """
@@ -250,6 +252,23 @@ class ChordRecognitionService:
             
             # Run chord recognition
             result = detector_service.recognize_chords(audio_file_to_process, chord_dict)
+
+            # Infer the key from the recognized chord roots and qualities.
+            # This keeps key detection tied to the same chord sequence shown
+            # to the client instead of using a separate audio-only estimate.
+            if result.get('success'):
+                recognized_chords = [
+                    item.get('chord') if isinstance(item, dict) else item
+                    for item in (result.get('chords') or [])
+                ]
+                theory = self.theory_engine.build({'chords': recognized_chords})
+                result['key'] = theory.get('likely_key') or '—'
+                result['key_confidence'] = theory.get('key_confidence', 0)
+                result['key_analysis'] = {
+                    'normalized_chords': theory.get('normalized_chords', []),
+                    'roman_numerals': theory.get('roman_numerals', []),
+                    'unique_chords': theory.get('unique_chords', []),
+                }
             
             # Add metadata
             result['file_size_mb'] = file_size_mb

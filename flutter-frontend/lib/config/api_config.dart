@@ -10,10 +10,17 @@ class ApiConfig {
   // Use 10.0.2.2 for the Android emulator, or replace this with the host
   // machine's LAN IP when running on a physical device. For Flutter web and
   // iOS simulator, localhost/127.0.0.1 points at the host machine.
-  static const String baseUrl = String.fromEnvironment(
+  static const String defaultBaseUrl = String.fromEnvironment(
     'SONIC_PULSE_API_URL',
     defaultValue: 'http://127.0.0.1:5001',
   );
+  static String _baseUrl = defaultBaseUrl;
+
+  static String get baseUrl => _baseUrl;
+
+  static void setBaseUrl(String value) {
+    _baseUrl = value.trim().replaceFirst(RegExp(r'/+$'), '');
+  }
 
   /// Toggle to false when the backend is live.
   static const bool useMockResponses = false;
@@ -26,6 +33,7 @@ class ApiConfig {
   static const String analyzeEndpoint = '/api/recognize-chords';
   static const String analyzeAudioEndpoint = '/api/analyze-audio';
   static const String youtubeSearchEndpoint = '/api/search-youtube';
+  static const String youtubeAudioEndpoint = '/api/youtube-audio';
 
   /// Receives a user-selected catalogue song as JSON: `{title, artist}`.
   static const String selectedSongEndpoint = '/api/analyze-song';

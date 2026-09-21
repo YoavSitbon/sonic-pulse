@@ -4,7 +4,9 @@ Time signature detection utilities.
 This module provides functions for detecting time signatures from beat patterns.
 """
 
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 from utils.logging import log_debug
 
 
@@ -67,3 +69,114 @@ def detect_time_signature_from_pattern(pattern: List[int]) -> Optional[int]:
                             return cycle_len
 
     return None
+
+
+def infer_time_signature(
+    beat_times: np.ndarray,
+    audio: np.ndarray,
+    sample_rate: int,
+) -> Tuple[str, float, Dict[str, List[float]]]:
+    """Estimate the meter from beat spacing and accents in the audio.
+
+    Beat trackers generally identify beat positions, not the meter.  This
+    function scores common meters using the relative onset strength at each
+    beat.  It is intentionally conservative: the confidence value lets
+    callers distinguish a useful estimate from the 4/4 fallback case.
+
+    Returns ``(time_signature, confidence, downbeat_candidates)``.
+    ``downbeat_candidates`` contains the beat positions at the start of each
+    estimated bar for every candidate meter.
+    """
+    beats = np.asarray(beat_times, dtype=float)
+    candidates = ((2, 4), (3, 4), (4, 4), (6, 8), (9, 8), (12, 8))
+    candidate_downbeats = {
+        f"{numerator}/{denominator}": beats[::numerator].tolist()
+        for numerator, denominator in candidates
+    }
+
+    if len(beats) < 12 or sample_rate <= 0 or audio.size == 0:
+        return "4/4", 0.0, candidate_downbeats
+
+    try:
+        # Use a lightweight onset/energy proxy instead of importing
+        # librosa.onset here.  Some deployments use a Numba cache that makes
+        # importing that optional module fail even though beat tracking works.
+        signal = np.asarray(audio, dtype=float)
+        flux = np.abs(np.diff(signal, prepend=signal[0]))
+        smoothing_window = max(1, int(sample_rate * 0.025))
+        smoothed_flux = np.convolve(
+            flux,
+            np.ones(smoothing_window, dtype=float) / smoothing_window,
+            mode="same",
+        )
+        beat_strength = []
+        beat_interval = float(np.median(np.diff(beats)))
+        half_window = max(1, int(sample_rate * beat_interval * 0.2))
+        for beat in beats:
+            center = int(round(beat * sample_rate))
+            start = max(0, center - half_window)
+            end = min(len(smoothed_flux), center + half_window + 1)
+            beat_strength.append(float(np.max(smoothed_flux[start:end])))
+        beat_strength = np.asarray(beat_strength, dtype=float)
+        spread = float(np.std(beat_strength))
+        if spread < 1e-6:
+            return "4/4", 0.0, candidate_downbeats
+        beat_strength = (beat_strength - np.mean(beat_strength)) / spread
+
+        scores = []
+        for numerator, denominator in candidates:
+            # Compound meters usually accent each dotted-quarter group;
+            # simple meters primarily accent the first beat of the bar.
+            if denominator == 8:
+                accent_positions = {0: 1.0}
+                for position in range(3, numerator, 3):
+                    accent_positions[position] = 0.65
+            else:
+                accent_positions = {0: 1.0}
+
+            phase_scores = []
+            for phase in range(numerator):
+                values = []
+                for index in range(phase, len(beat_strength) - numerator, numerator):
+                    bar = beat_strength[index:index + numerator]
+                    if len(bar) != numerator:
+                        continue
+                    accent = sum(
+                        weight * float(bar[position])
+                        for position, weight in accent_positions.items()
+                    ) / sum(accent_positions.values())
+                    non_accent_positions = [
+                        position for position in range(numerator)
+                        if position not in accent_positions
+                    ]
+                    contrast = accent - (
+                        float(np.mean(bar[non_accent_positions]))
+                        if non_accent_positions else 0.0
+                    )
+                    values.append(contrast)
+                if values:
+                    phase_scores.append(float(np.mean(values)))
+            if phase_scores:
+                # Prefer the simpler equivalent meter when the accent evidence
+                # is effectively tied (for example, plain 3/4 can otherwise
+                # look identical to 12/8 when every third beat is accented).
+                raw_score = max(phase_scores)
+                adjusted_score = raw_score - (0.015 * numerator)
+                scores.append((adjusted_score, numerator, denominator))
+
+        if not scores:
+            return "4/4", 0.0, candidate_downbeats
+
+        scores.sort(reverse=True)
+        best_score, numerator, denominator = scores[0]
+        second_score = scores[1][0] if len(scores) > 1 else best_score
+        confidence = float(np.clip((best_score - second_score) / 2.0, 0.0, 1.0))
+        signature = f"{numerator}/{denominator}"
+        log_debug(
+            f"Meter estimate: {signature} confidence={confidence:.2f} "
+            f"scores={[(n, d, round(s, 3)) for s, n, d in scores]}"
+        )
+        return signature, confidence, candidate_downbeats
+    except Exception as exc:
+        log_debug(f"Meter estimation unavailable; using 4/4 fallback: {exc}")
+        return "4/4", 0.0, candidate_downbeats

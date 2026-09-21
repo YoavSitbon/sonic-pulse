@@ -19,6 +19,7 @@ import 'find_song_screen.dart';
 import 'library_screen.dart';
 import 'settings_screen.dart';
 import 'youtube_search_screen.dart';
+import 'key_details_screen.dart';
 
 // ─────────────────────────────────────────────────────────────
 // Screen states
@@ -68,6 +69,8 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
     if (widget.initialResult != null) {
       _result = widget.initialResult;
       _state = _AnalyzeState.result;
+      _audioUrl = widget.initialResult!.audioUrl;
+      unawaited(_restoreInitialAudio());
     }
 
     _outerPulse = AnimationController(
@@ -232,6 +235,31 @@ class _AiAnalyzerScreenState extends State<AiAnalyzerScreen>
       }
     } catch (e) {
       _showError('Could not play the recording: $e');
+    }
+  }
+
+  Future<void> _restoreInitialAudio() async {
+    final result = widget.initialResult;
+    if (result == null) return;
+    final youtubeUrl = result.youtubeUrl ??
+        result.analysisData['youtube_url']?.toString();
+    try {
+      String? audioUrl = result.audioUrl;
+      if (youtubeUrl != null && youtubeUrl.isNotEmpty) {
+        // YouTube stream URLs expire, so resolve a fresh one every time a
+        // saved/history analysis is opened.
+        audioUrl = await _recognizer.refreshYouTubeAudioUrl(youtubeUrl);
+      }
+      if (audioUrl == null || audioUrl.isEmpty) return;
+      await _audioPlayer.setUrl(audioUrl);
+      if (!mounted) return;
+      setState(() {
+        _audioUrl = audioUrl;
+        _result = result.copyWith(audioUrl: audioUrl);
+      });
+    } catch (_) {
+      // Keep the analysis view usable even if YouTube cannot refresh its
+      // temporary stream URL right now.
     }
   }
 
@@ -1196,6 +1224,27 @@ class _ResultsView extends StatelessWidget {
                             label: 'TIME',
                             value: result.timeSig,
                           ),
+                          const SizedBox(width: 12),
+                          GestureDetector(
+                            onTap: result.key == '—'
+                                ? null
+                                : () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => KeyDetailsScreen(
+                                          keyName: result.key,
+                                          songTitle: result.title,
+                                          artworkUrl: result.artworkUrl,
+                                          player: player,
+                                        ),
+                                      ),
+                                    ),
+                            child: _TrackMetric(
+                              label: 'KEY',
+                              value: result.key,
+                              accent: result.key != '—',
+                            ),
+                          ),
                         ],
                       ),
                     ],
@@ -1373,8 +1422,13 @@ class _ResultsView extends StatelessWidget {
 class _TrackMetric extends StatelessWidget {
   final String label;
   final String value;
+  final bool accent;
 
-  const _TrackMetric({required this.label, required this.value});
+  const _TrackMetric({
+    required this.label,
+    required this.value,
+    this.accent = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1386,7 +1440,7 @@ class _TrackMetric extends StatelessWidget {
             style: GoogleFonts.spaceGrotesk(
               fontSize: 12,
               fontWeight: FontWeight.w700,
-              color: AppColors.primary,
+              color: accent ? AppColors.secondary : AppColors.primary,
             ),
           ),
           TextSpan(
@@ -1727,6 +1781,7 @@ class _ChordTimelineGrid extends StatelessWidget {
           );
     final beatsPerBar = int.tryParse(result.timeSig.split('/').first) ?? 4;
     final beatsPerRow = switch (beatsPerBar) {
+      2 => 8,
       3 => 9,
       4 => 8,
       6 => 6,

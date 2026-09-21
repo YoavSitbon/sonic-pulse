@@ -62,6 +62,17 @@ class YouTubeSearchService:
             self.cleanup(directory)
             raise
 
+    def get_audio_url(self, url: str) -> str:
+        """Resolve a fresh playable stream URL without downloading the file."""
+        options = {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "format": "bestaudio[ext=m4a]/bestaudio/best",
+        }
+        info = self._extract(url, options, download=False)
+        return info.get("url") or ""
+
     @staticmethod
     def cleanup(path: str) -> None:
         import shutil

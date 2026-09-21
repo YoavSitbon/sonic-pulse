@@ -9,6 +9,17 @@ class StorageService {
   static const int _maxHistory = 50;
   static const String _tabPreferencesKey = 'tab_source_preferences';
   static const String _autoShazamKey = 'auto_shazam_enabled';
+  static const String _apiBaseUrlKey = 'api_base_url';
+
+  Future<String?> loadApiBaseUrl() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_apiBaseUrlKey);
+  }
+
+  Future<void> saveApiBaseUrl(String value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_apiBaseUrlKey, value);
+  }
 
   Future<bool> loadAutoShazam() async {
     final prefs = await SharedPreferences.getInstance();

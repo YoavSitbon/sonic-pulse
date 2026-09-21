@@ -5,9 +5,15 @@ import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'providers/app_state.dart';
 import 'services/http_overrides.dart';
+import 'config/api_config.dart';
+import 'services/storage_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final savedBaseUrl = await StorageService().loadApiBaseUrl();
+  if (savedBaseUrl != null && savedBaseUrl.trim().isNotEmpty) {
+    ApiConfig.setBaseUrl(savedBaseUrl);
+  }
   configureHttpOverrides();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/storage_service.dart';
+import '../config/api_config.dart';
 import '../theme/app_colors.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -15,6 +16,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Map<String, List<String>> _selected = {'en': [], 'he': []};
   bool _loaded = false;
   bool _autoShazam = false;
+  late final TextEditingController _apiUrlController;
+  bool _savingApiUrl = false;
 
   static const _sources = {
     'en': [('ultimate_guitar', 'Ultimate Guitar')],
@@ -24,7 +27,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    _apiUrlController = TextEditingController(text: ApiConfig.baseUrl);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _apiUrlController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -59,6 +69,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _storage.saveTabPreferences(updated);
   }
 
+  Future<void> _saveApiUrl() async {
+    final value = _apiUrlController.text.trim().replaceFirst(RegExp(r'/+$'), '');
+    final uri = Uri.tryParse(value);
+    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https') || uri.host.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid URL, including the port.')),
+      );
+      return;
+    }
+    setState(() => _savingApiUrl = true);
+    ApiConfig.setBaseUrl(value);
+    await _storage.saveApiBaseUrl(ApiConfig.baseUrl);
+    if (!mounted) return;
+    setState(() => _savingApiUrl = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Backend URL saved.')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -91,6 +120,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   activeColor: AppColors.secondary,
                   contentPadding: EdgeInsets.zero,
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'BACKEND CONNECTION',
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Change the server address and port without rebuilding the app.',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    color: AppColors.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _apiUrlController,
+                  keyboardType: TextInputType.url,
+                  autocorrect: false,
+                  decoration: const InputDecoration(
+                    labelText: 'Backend URL',
+                    hintText: 'http://192.168.1.20:5001',
+                    prefixIcon: Icon(Icons.dns_rounded),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: _savingApiUrl ? null : _saveApiUrl,
+                    child: Text(_savingApiUrl ? 'SAVING…' : 'SAVE BACKEND URL'),
+                  ),
                 ),
                 const SizedBox(height: 24),
                 Text(

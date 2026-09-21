@@ -9,6 +9,7 @@ import time
 import numpy as np
 from typing import Dict, Any, List
 from utils.logging import log_info, log_error, log_debug
+from services.audio.time_signature import infer_time_signature
 
 
 class LibrosaDetectorService:
@@ -88,11 +89,11 @@ class LibrosaDetectorService:
             tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
             beat_times = librosa.frames_to_time(beats, sr=sr)
 
-            # Estimate downbeats (every 4th beat as a simple heuristic)
-            downbeat_times = beat_times[::4]
-
-            # Simple time signature detection (default to 4/4)
-            time_signature = 4
+            time_signature, meter_confidence, _ = infer_time_signature(
+                beat_times, y, sr
+            )
+            beats_per_bar = int(time_signature.split('/')[0])
+            downbeat_times = beat_times[::beats_per_bar]
 
             processing_time = time.time() - start_time
 
@@ -105,7 +106,8 @@ class LibrosaDetectorService:
                 "total_beats": len(beat_times),
                 "total_downbeats": len(downbeat_times),
                 "bpm": float(tempo),
-                "time_signature": f"{time_signature}/4",
+                "time_signature": time_signature,
+                "time_signature_confidence": meter_confidence,
                 "duration": float(duration),
                 "model_used": "librosa",
                 "model_name": "Librosa",

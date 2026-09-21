@@ -31,6 +31,7 @@ class TrackResult {
   final DateTime timestamp;
   final String? artworkUrl;
   final String? audioUrl;
+  final String? youtubeUrl;
   final String? tabSource;
   final String? tabSourceId;
   final String? tabUrl;
@@ -61,6 +62,7 @@ class TrackResult {
     required this.timestamp,
     this.artworkUrl,
     this.audioUrl,
+    this.youtubeUrl,
     this.tabSource,
     this.tabSourceId,
     this.tabUrl,
@@ -97,6 +99,7 @@ class TrackResult {
           : DateTime.now(),
       artworkUrl: json['artwork_url'] as String?,
       audioUrl: json['audio_url'] as String?,
+      youtubeUrl: json['youtube_url'] as String?,
       tabSource: json['tab_source'] as String?,
       tabSourceId: json['tab_source_id'] as String?,
       tabUrl: json['tab_url'] as String?,
@@ -155,7 +158,7 @@ class TrackResult {
       title: 'Recorded analysis',
       artist: 'SonicPulse AI',
       album: json['model_name'] as String? ?? 'Chord recognition',
-      key: '—',
+      key: json['key'] as String? ?? '—',
       bpm: 0,
       confidence: confidenceCount == 0
           ? 0.0
@@ -190,7 +193,10 @@ class TrackResult {
       title: 'Recorded analysis',
       artist: 'SonicPulse AI',
       album: chordPayload['model_name'] as String? ?? 'Chord recognition',
-      key: '—',
+      key:
+          json['key'] as String? ??
+          chordPayload['key'] as String? ??
+          '—',
       bpm:
           (json['bpm'] as num?)?.round() ??
           (beatPayload['bpm'] as num?)?.round() ??
@@ -204,6 +210,7 @@ class TrackResult {
           beatPayload['time_signature'] as String? ??
           '—',
       timestamp: DateTime.now(),
+      youtubeUrl: json['youtube_url'] as String?,
       chordSegments: segments,
       beats: _parseNumbers(json['beats'] ?? beatPayload['beats']),
       downbeats: _parseNumbers(json['downbeats'] ?? beatPayload['downbeats']),
@@ -325,6 +332,7 @@ class TrackResult {
       'timestamp': timestamp.toIso8601String(),
       'artwork_url': artworkUrl,
       'audio_url': audioUrl,
+      'youtube_url': youtubeUrl,
       'tab_source': tabSource,
       'tab_source_id': tabSourceId,
       'tab_url': tabUrl,
@@ -376,6 +384,7 @@ class TrackResult {
     bool? isSaved,
     String? artworkUrl,
     String? audioUrl,
+    String? youtubeUrl,
     String? tabSource,
     String? tabSourceId,
     String? tabUrl,
@@ -397,6 +406,7 @@ class TrackResult {
       timestamp: timestamp,
       artworkUrl: artworkUrl ?? this.artworkUrl,
       audioUrl: audioUrl ?? this.audioUrl,
+      youtubeUrl: youtubeUrl ?? this.youtubeUrl,
       tabSource: tabSource ?? this.tabSource,
       tabSourceId: tabSourceId ?? this.tabSourceId,
       tabUrl: tabUrl ?? this.tabUrl,
